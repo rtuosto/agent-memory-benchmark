@@ -36,15 +36,14 @@
 
 ### Current State
 
-- Branches (local only; not pushed):
-  - `main` — 1 commit (bootstrap stub)
-  - `feat/scaffold` — 2 commits on top of main (bootstrap + scaffold)
-  - `feat/types-compat` — 1 commit on top of feat/scaffold (types + compat)
-- Tests: `pytest` → 17 passed
-- Lint: `ruff check`, `ruff format --check` → clean
-- Types: `mypy src` → clean
-- CLI: `amb --version` → `amb 0.1.0`
-- Venv: `.venv/` at repo root; `pip install -e ".[dev,openai,tiktoken]"` succeeds
+- Branches: `main` has PR-1 + PR-2 merged in (user-approved merge). `feat/scaffold` and `feat/types-compat` are retained locally as merge-history audit trails but are no longer needed for active work.
+- `main` head: contains the full bootstrap + scaffold + types/compat layers (5 commits from repo init).
+- Remote: `https://github.com/rtuosto/agent-memory-benchmark.git` set as `origin` but nothing pushed yet.
+- Tests: `pytest` → 17 passed on `main`.
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean.
+- CLI: `amb --version` → `amb 0.1.0`.
+- Venv: `.venv/` at repo root; `pip install -e ".[dev,openai,tiktoken]"` succeeds.
 
 ### What's Next
 
@@ -73,7 +72,8 @@
 ```
 cd ~/code/agent-memory-benchmark
 source .venv/Scripts/activate
-git checkout feat/types-compat
-# Start PR-3 work on a new branch stacked on feat/types-compat:
+git checkout main
+git pull --ff-only origin main   # if/when pushed
+# Start PR-3 work:
 git checkout -b feat/llm-providers
 ```
