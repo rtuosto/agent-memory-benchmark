@@ -41,6 +41,7 @@ coverage.xml
 venv/
 env/
 ENV/
+*.egg-info/
 
 # Benchmark runtime output (git-ignored; results belong in CI artifacts or user-specified dirs)
 cache/
@@ -62,6 +63,6 @@ Thumbs.db
 .env.*
 !.env.example
 
-# Agent state (optional per-repo)
-.agent/session-handoff.md
+# Agent state — current-plan.md is ephemeral (gitignored); lessons.md and
+# session-handoff.md ARE committed (valuable across sessions).
 .agent/current-plan.md
