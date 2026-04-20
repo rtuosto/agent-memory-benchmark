@@ -13,6 +13,27 @@ memory-system authors may choose to match for zero-glue benchmarking.
 
 from __future__ import annotations
 
+from .compat import MemorySystemShape, PersistableMemorySystemShape
+from .types import (
+    AnswerResult,
+    BenchmarkCase,
+    DatasetName,
+    QAItem,
+    RetrievedUnit,
+    Session,
+    Turn,
+)
 from .version import __version__
 
-__all__ = ["__version__"]
+__all__ = [
+    "AnswerResult",
+    "BenchmarkCase",
+    "DatasetName",
+    "MemorySystemShape",
+    "PersistableMemorySystemShape",
+    "QAItem",
+    "RetrievedUnit",
+    "Session",
+    "Turn",
+    "__version__",
+]
