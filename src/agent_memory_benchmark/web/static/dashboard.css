@@ -1,14 +1,17 @@
 :root {
-    --fg: #1a1a1a;
-    --muted: #6b7280;
-    --bg: #fafafa;
-    --card: #ffffff;
-    --border: #e5e7eb;
-    --accent: #2563eb;
-    --hover: #eff6ff;
-    --good: #16a34a;
-    --bad: #dc2626;
+    --fg: #e5e7eb;
+    --muted: #9ca3af;
+    --bg: #0f1115;
+    --card: #1a1d23;
+    --border: #2a2f37;
+    --accent: #60a5fa;
+    --hover: #232833;
+    --good: #34d399;
+    --bad: #f87171;
+    --code-bg: #2a2f37;
 }
+
+html { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -60,9 +63,10 @@ h2 { font-size: 1.1rem; margin: 2rem 0 0.75rem 0; }
 code {
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 0.85em;
-    background: var(--border);
+    background: var(--code-bg);
     padding: 0.05em 0.35em;
     border-radius: 3px;
+    color: #f3f4f6;
 }
 
 .muted { color: var(--muted); font-weight: normal; }
@@ -138,6 +142,17 @@ table tbody tr:last-child td { border-bottom: none; }
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
+
+.chart-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1rem;
+    height: 280px;
+    position: relative;
+}
+
+.chart-box.tall { height: 360px; }
 
 .raw-md {
     background: var(--card);

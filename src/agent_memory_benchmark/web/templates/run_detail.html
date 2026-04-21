@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ summary.run_id }} — amb dashboard{% endblock %}
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='/charts.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 <p><a href="/runs">← Runs</a></p>
 <h1>{{ summary.run_id }}</h1>
@@ -36,44 +40,15 @@
 {% if per_category %}
 <section>
     <h2>Per-category quality</h2>
-    <table>
-        <thead><tr><th>Bucket</th><th class="num">n</th><th class="num">Accuracy</th><th class="num">Token-F1</th></tr></thead>
-        <tbody>
-        {% for name, cat in per_category.items() %}
-            <tr>
-                <td>{{ name }}</td>
-                <td class="num">{{ cat.get("count", "—") }}</td>
-                <td class="num">{{ "%.2f%%"|format(cat.get("accuracy") * 100) if cat.get("accuracy") is not none else "—" }}</td>
-                <td class="num">{{ "%.2f%%"|format(cat.get("token_f1") * 100) if cat.get("token_f1") is not none else "—" }}</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+    <div class="chart-box tall"><canvas id="chart-per-category"></canvas></div>
 </section>
 {% endif %}
 
 {% set latency = scorecard.get("latency_ms", {}) %}
 {% if latency %}
 <section>
-    <h2>Latency (ms)</h2>
-    <table>
-        <thead><tr><th>Bucket</th><th class="num">mean</th><th class="num">p50</th><th class="num">p95</th><th class="num">max</th><th class="num">n</th></tr></thead>
-        <tbody>
-        {% for key in ["ingestion_per_case", "ingestion_per_session", "retrieval_per_query", "generation_per_query", "answer_total_per_query", "answer_discrepancy", "judge_per_question"] %}
-            {% set dist = latency.get(key) %}
-            {% if dist and dist.get("mean") is not none %}
-            <tr>
-                <td>{{ key }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("mean")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("p50")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("p95")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("max")) }}</td>
-                <td class="num">{{ dist.get("n", "—") }}</td>
-            </tr>
-            {% endif %}
-        {% endfor %}
-        </tbody>
-    </table>
+    <h2>Latency (ms, log scale)</h2>
+    <div class="chart-box tall"><canvas id="chart-latency"></canvas></div>
 </section>
 {% endif %}
 
@@ -81,23 +56,15 @@
 {% if footprint %}
 <section>
     <h2>Retrieval footprint</h2>
-    <table>
-        <thead><tr><th>Metric</th><th class="num">mean</th><th class="num">p50</th><th class="num">p95</th><th class="num">max</th></tr></thead>
-        <tbody>
-        {% for key in ["units_per_query", "tokens_per_query"] %}
-            {% set dist = footprint.get(key) %}
-            {% if dist and dist.get("mean") is not none %}
-            <tr>
-                <td>{{ key }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("mean")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("p50")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("p95")) }}</td>
-                <td class="num">{{ "%.1f"|format(dist.get("max")) }}</td>
-            </tr>
-            {% endif %}
-        {% endfor %}
-        </tbody>
-    </table>
+    <div class="chart-box"><canvas id="chart-footprint"></canvas></div>
+</section>
+{% endif %}
+
+{% set evidence = scorecard.get("evidence", {}) %}
+{% if evidence %}
+<section>
+    <h2>Evidence KPIs</h2>
+    <div class="chart-box"><canvas id="chart-evidence"></canvas></div>
 </section>
 {% endif %}
 
@@ -112,4 +79,6 @@
     <a href="/runs/{{ summary.run_id }}/scorecard.json">Raw scorecard.json</a>
     <a href="/runs/{{ summary.run_id }}/meta.json">Raw meta.json</a>
 </section>
+
+<script id="chart-data" type="application/json">{{ chart_data_json | safe }}</script>
 {% endblock %}

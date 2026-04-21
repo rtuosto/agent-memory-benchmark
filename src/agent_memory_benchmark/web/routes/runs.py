@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
+from ..charts import build_chart_data
+
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
 
@@ -46,6 +48,8 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         detail = index.get_run(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        import json as _json
+
         return templates.TemplateResponse(
             request,
             "run_detail.html",
@@ -54,6 +58,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 "scorecard": detail.scorecard,
                 "meta": detail.meta,
                 "scorecard_md": detail.scorecard_md,
+                "chart_data_json": _json.dumps(build_chart_data(detail.scorecard)),
             },
         )
 

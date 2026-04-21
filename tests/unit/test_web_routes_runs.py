@@ -99,15 +99,30 @@ def test_runs_list_contains_seeded_run(tmp_path: Path) -> None:
     assert "57.00%" in response.text  # overall_accuracy rendered
 
 
-def test_run_detail_renders_kpis_and_latency_table(tmp_path: Path) -> None:
+def test_run_detail_renders_kpis_and_chart_data(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.get("/runs/2026-04-21_120000_demo")
     assert response.status_code == 200
     body = response.text
-    assert "ingestion_per_case" in body
-    assert "retrieval_per_query" in body
+    # KPI cards rendered.
     assert "55.00%" in body  # macro_accuracy
     assert "# Scorecard" in body  # scorecard.md embedded
+    # Canvas elements exist for each chart section.
+    assert 'id="chart-latency"' in body
+    assert 'id="chart-per-category"' in body
+    # Chart data is embedded as JSON — parse it back out and verify shape.
+    import json
+    import re
+
+    match = re.search(
+        r'<script id="chart-data" type="application/json">(.*?)</script>',
+        body,
+        re.DOTALL,
+    )
+    assert match is not None
+    chart_data = json.loads(match.group(1))
+    assert chart_data["per_category"]
+    assert any(row["name"] == "ingestion_per_case" for row in chart_data["latency"])
 
 
 def test_run_detail_404s_on_unknown_run(tmp_path: Path) -> None:
