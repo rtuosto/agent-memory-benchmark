@@ -43,6 +43,7 @@ memory system.
 | Component | Purpose | Location |
 |-----------|---------|----------|
 | `compat.MemorySystemShape` | Published `typing.Protocol` spec — documentation, not dependency | `src/agent_memory_benchmark/compat.py` |
+| `compat/<system>_shim.py` | Benchmark-side wrapper classes for specific memory systems whose class signature diverges from `MemorySystemShape`. Never patches the target repo — the invariant is that memory systems have zero knowledge of the benchmark. | `src/agent_memory_benchmark/compat/` |
 | `adapters/` | Transport-layer abstraction: Python, HTTP, full-context baseline | `src/agent_memory_benchmark/adapters/` |
 | `datasets/` | Dataset loaders producing uniform `BenchmarkCase` iterators | `src/agent_memory_benchmark/datasets/` |
 | `llm/` | Ollama + OpenAI providers, unified `LLMProvider` protocol | `src/agent_memory_benchmark/llm/` |
@@ -129,6 +130,14 @@ Ollama must be running locally for integration tests that use it:
 - **New LLM provider** — add `src/agent_memory_benchmark/llm/<name>.py` implementing `LLMProvider`; register in `parse_spec`.
 - **New dataset** — add `src/agent_memory_benchmark/datasets/<name>.py` subclassing `DatasetAdapter`; add judge prompts in `judge/<name>.py` with a new fingerprint; register in `load_dataset`.
 - **New transport** — add `src/agent_memory_benchmark/adapters/<name>_adapter.py` subclassing `MemoryAdapter`; register in `resolve_adapter`.
+- **New wrapper shim for a target with divergent class signature** — add `src/agent_memory_benchmark/compat/<system>_shim.py` with a wrapper class that declares `memory_system_id` / `memory_version` and translates types at the boundary. Point the CLI at the wrapper with `--memory python:agent_memory_benchmark.compat.<system>_shim:<WrapperClass>`. Never modifies the target repo.
+- **New mapper function for a structurally-compatible target** — if the target already has the required attrs + async methods and only Session / AnswerResult values need translating, add a `session_mapper` / `result_mapper` function in the same `compat/<system>_shim.py` and reference it via `--session-mapper agent_memory_benchmark.compat.<system>_shim:to_<system>_session`.
+
+## Reference integrations
+
+| System | Status | Notes |
+|--------|--------|-------|
+| `memory.system.MultiLayerMemory` (engram) | Wrapper shim in PR-7.5 (`compat/engram_shim.py`) | `EngramShim` wrapper class; zero engram-side changes. Evidence KPIs work as long as engram returns retrieved chunks with `text` populated — the benchmark attributes them to evidence turns itself. |
 
 ## Related
 

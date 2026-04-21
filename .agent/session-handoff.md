@@ -5,6 +5,171 @@
 
 ---
 
+## Session: 2026-04-20 — Evidence attribution: benchmark owns the math
+
+### What Was Done
+
+**Correction commit (`7a0e916` on `feat/runner`, stacked atop PR-7.5):** evidence KPIs are now computed by the benchmark itself via text attribution rather than depending on memory systems to self-report `RetrievedUnit.source_turn_ids`. Architectural motivation: the benchmark is a measurement instrument; measurements shouldn't be delegated to the thing being measured. The benchmark already has everything it needs — dataset-derived evidence turn text + `RetrievedUnit.text` from the adapter.
+
+- `QARecord` gains `evidence_texts: list[str]` (populated by the runner from `case.sessions` at record-creation time, looked up by `turn_id`) and `retrieved_texts: list[str]` (projected from `AnswerResult.retrieved[*].text`). `evidence_turn_ids` / `retrieved_turn_ids` kept for diagnostics only.
+- `results/scorecard.py::_evidence_stats` rewritten around SQuAD-normalized token multiset attribution. `EVIDENCE_COVERAGE_THRESHOLD = 0.5` — a retrieved unit "covers" an evidence turn when their multiset intersection ≥ 50% of the evidence turn's token count. All six plan KPIs (turn/unit × completeness/density + token × completeness/density) compute from text alone. Turn and unit numbers collapse onto each other under text attribution (there's no per-unit turn mapping) — they're kept as distinct JSON keys so a future adapter with reliable source-turn mappings can specialize.
+- `runner/orchestrator.py` gets a `_evidence_texts(case, qa)` helper that looks up turn IDs in `case.sessions`. Unknown IDs silently skipped (dataset schema drift shouldn't abort the run).
+- `compat/engram_shim.py` docstring + `docs/compat.md` + `docs/ARCHITECTURE.md` + plan file all updated: memory systems only need to populate `RetrievedUnit.text`; the benchmark handles attribution.
+
+**Tests (292 total, still 1 skipped):** 4 new evidence-specific tests including `does_not_depend_on_retrieved_turn_ids` and `token_density_penalizes_noisy_retrieval`; orchestrator test verifies `evidence_texts` is populated from the case not the adapter.
+
+### Current State
+
+- Branch: `feat/runner`. Latest: `7a0e916`.
+- Tests: 292 passed, 1 skipped.
+- Lint/format/types all clean.
+
+### Impact on Engram Path
+
+Before this correction, PR-7.5 docs implied evidence KPIs would stay `null` until engram populated `source_turn_ids`. After the correction, evidence KPIs work out of the box against any memory system that populates `RetrievedUnit.text` — which engram already does for any non-empty retrieval.
+
+### Gotchas
+
+- **`EVIDENCE_COVERAGE_THRESHOLD = 0.5` is a judgment call.** Half the evidence turn's tokens must reappear in a single retrieved unit for that turn to count as "covered." Too strict → paraphrased/summarized retrievals undercount. Too loose → trivial token overlap false-positives. Exposed as a module constant so it can be tuned from tests; not CLI-exposed yet (revisit if calibration work in PR-12 says it matters).
+- **Turn and unit metrics are equal under text attribution.** This is documented in `_evidence_stats` but worth remembering when reading scorecards — the turn_* / unit_* distinction only matters if we later add a source_turn_ids-aware path.
+
+---
+
+## Session: 2026-04-20 — PR-7.5 mapper CLI flags + engram wrapper shim
+
+### What Was Done
+
+**PR-7.5 (on `feat/runner`, stacked atop PR-7):** landed two complementary additions that together make it possible to benchmark engram end-to-end with zero engram-side changes.
+
+- `src/agent_memory_benchmark/adapters/factory.py` — `resolve_adapter` now accepts `session_mapper` / `result_mapper` kwargs and forwards them to `PythonAdapter.from_spec`. Passing mappers with `full-context` is an explicit `AdapterSpecError` (no silent drop).
+- `src/agent_memory_benchmark/runner/__init__.py` — new `_resolve_callable(spec, *, flag)` helper that resolves `"pkg.module:function"` strings via `importlib` with flag-name-aware errors (missing colon / empty sides / ImportError / missing attribute / non-callable target). `run_benchmark(...)` accepts `session_mapper_spec` / `result_mapper_spec` string kwargs and resolves them once at assembly time.
+- `src/agent_memory_benchmark/cli/run_cmd.py` — new `--session-mapper pkg.mod:fn` / `--result-mapper pkg.mod:fn` CLI flags threaded through to `run_benchmark`.
+- `src/agent_memory_benchmark/compat.py` → `src/agent_memory_benchmark/compat/__init__.py` via `git mv` (history preserved) so `compat/` can hold per-memory-system shims.
+- `src/agent_memory_benchmark/compat/engram_shim.py` — `EngramShim` wrapper class. Declares `memory_system_id: ClassVar[str] = "engram"` on the class itself and reads `memory_version` from engram's `MULTI_LAYER_MEMORY_VERSION` module constant at `__init__` time. Holds an inner `MultiLayerMemory`, translates types at the boundary. Import of `memory.system` is *lazy* (inside `__init__`) so the shim module stays importable when engram isn't installed. `__init__(**kwargs)` forwards to `MultiLayerMemory(**kwargs)` so existing `--memory-config` plumbing works unchanged.
+- `_to_engram_session` / `_from_engram_answer` mappers. Session translation tries `benchmark.datasets.locomo.Session` / `DialogueTurn` first, falls back to local duck-typed classes (`_DuckSession` / `_DuckTurn`) with `__slots__` for the required attribute names. Answer mapper reads attributes permissively (`getattr(raw, ..., default)`) so minor engram schema shifts don't break things; if engram starts populating `retrieved` with `source_turn_ids`, it flows through unchanged.
+
+**Tests (22 new; 290 total):**
+- `test_compat_engram_shim.py` — shim instantiation without engram raises a targeted `ImportError`, duck-fallback triggers when `benchmark.datasets.locomo` isn't importable, field-name mapping round-trip (including `None` image_caption), answer mapper builds `AnswerResult` from duck-typed objects, preserves `retrieved` when present, tolerates missing optional fields + coerces null timings.
+- `test_runner_mapper_resolution.py` — every error path on `_resolve_callable`, and a parametrize asserting the flag name appears in every error.
+- `test_adapters_factory.py` updates — mapper kwargs forward to `PythonAdapter`; full-context rejects mapper kwargs.
+- `test_cli_run_cmd.py` updates — `--session-mapper` / `--result-mapper` captured on the namespace; default to `None` when omitted.
+
+**Invocation (the payoff):**
+
+```bash
+amb run longmemeval \
+    --memory python:agent_memory_benchmark.compat.engram_shim:EngramShim \
+    --memory-config embedding_model=sentence-transformers/all-MiniLM-L6-v2 \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+```
+
+### Current State
+
+- Branch: `feat/runner` (not yet merged). Three PR-level commits (`d4500d3` PR-7 impl, `45ddb5f` handoff, `6748a2d` docs, `d1029af` docs correction, `e6099c3` PR-7.5 impl).
+- Tests: 290 passed, 1 skipped (POSIX-only symlink test).
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (36 source files).
+
+### What's Next
+
+- Merge chain: PR-6 → PR-7 → PR-7.5. All sit in order on `feat/runner`.
+- **PR-8** — CLI subcommands unchanged in scope.
+
+### Open Questions
+
+- **When to ship a real engram integration test** — the shim is currently only unit-tested (engram not installed in this repo's venv). The right place for a real-engram smoke test is `tests/integration/` with a conditional skip when engram isn't on `PYTHONPATH`. Probably folds in alongside PR-13's integration-test work with recorded HTTP fixtures.
+- **Evidence KPIs on engram runs** — will stay `null` until engram populates `RetrievedUnit.source_turn_ids`. That's an engram-side change, not in scope for this repo.
+
+### Gotchas
+
+- **Duck-typed engram session.** The shim's `_DuckSession` / `_DuckTurn` fallback relies on engram's code doing attribute access, not `isinstance(session, Session)` checks. If engram ever tightens to `isinstance`, the fallback needs to be replaced with a subclass of the real types (requires engram be importable, which restricts test coverage). The duck objects use `__slots__` to match the minimal shape exactly.
+- **`_resolve_callable` runs at assembly time**, before the adapter opens. So bad mapper specs surface *before* any LLM connection is made — the error message says which flag was wrong and why.
+- **Mapper function path vs. wrapper class path.** Docs spell out the distinction: wrapper class for any class-signature divergence (missing `memory_system_id`, different method names), mapper flags only when the target already matches `MemorySystemShape` structurally and just the *value types* need translating.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+# Once PR-6 / PR-7 / PR-7.5 are all merged:
+git checkout main
+git checkout -b feat/cli-subcommands
+# Start PR-8: baseline / rejudge / compare / summarize / cache commands.
+```
+
+---
+
+## Session: 2026-04-20 — PR-7 runner + manifest + scorecard + `amb run`
+
+### What Was Done
+
+**PR-7 (on `feat/runner`, branched from `feat/longmemeval` — PR-6 is still unmerged, so PR-7 is stacked atop it and will ride in after PR-6 merges):**
+
+- `runner/manifest.py` — `QARecord` (one row per question, with runner- + adapter-measured timings + `answer_discrepancy_ms` drift signal + `evidence_turn_ids` / `retrieved_turn_ids` for the evidence KPIs), `RunManifest` (every field needed to reproduce the run — model specs + resolved digests, dataset descriptor hash + HF revision, judge prompt fingerprint, benchmark git state, full CLI argv, protocol version 0.1), `RunDir` (typed wrapper for `answers.json` / `meta.json` / `scorecard.{json,md}`), `save_run_file` / `load_run_file` (forward-compat: unknown fields on disk are dropped).
+- `runner/latest.py` — `update_latest_pointer` tries symlink → Windows junction → `latest.txt` fallback. Never hard-fails; preserves a real `latest/` directory if present.
+- `runner/judge_adapter.py` — `BenchmarkJudge` Protocol + `LongMemEvalJudge` concrete class. The judge returns the *template* fingerprint (not the formatted prompt) so re-baselining a template invalidates the right cohort. LongMemEval rejects `--judge-runs > 1` at construction time since upstream protocol is single-run yes/no.
+- `runner/orchestrator.py` — `BenchmarkRunner`: the ingest → answer → judge loop. Cache-aware for all three caches, resume-aware via `answers.json` keys, writes the run file after each QA so Ctrl-C is safe. `_load_cached_judge` mirrors the write path exactly so cache-hit lookups always find what was written.
+- `runner/__init__.py` — `run_benchmark(...)` assembly-time entry point. Resolves git state, provider specs (Ollama digest pinning via `resolve_spec`), builds the `RunManifest`, opens/closes the adapter + both providers with `try/finally`, and calls `_finalize_artifacts` to produce `scorecard.{json,md}` + update `results/latest`.
+- `results/scorecard.py` — four KPI families per plan: **quality** (overall + macro accuracy, token-F1 with SQuAD-style normalization, per-category), **wall-time perf** with `{mean, p50, p95, max}` distributions for every timing bucket + the `answer_discrepancy_ms` drift signal, **retrieval footprint** (units + tokens per query), **evidence KPIs** (turn/unit/token × completeness/density), plus the `throughput.queries_per_sec` / `throughput.sessions_per_sec` headline. `scorecard_to_dict` locks the public JSON shape (tested).
+- `results/render.py` — `render_scorecard_markdown` for `scorecard.md` (throughput headline → quality → per-category → latency → retrieval footprint → evidence KPIs → methodology) + `print_scorecard_rich` for the console. `rich` import is lazy so `build_scorecard` stays pure-stdlib.
+- `cli/run_cmd.py` + `cli/main.py` — `amb run <dataset> ...` with every knob from the plan. `--memory-config KEY=VALUE` parses values as JSON when possible, strings otherwise (so `timeout=30` is an int, `model=llama3` stays a string).
+
+**Tests (60 new; 268 total; 1 skipped on Windows):**
+- `test_runner_manifest.py` — save/load roundtrip, drop-unknown forward-compat, path-component sanitization (including `...` → `unnamed`), directory name composition.
+- `test_runner_latest.py` — POSIX symlink success (skipped on win32), real-directory preservation, `latest.txt` fallback when symlink + junction both fail, Windows permission-denied simulation.
+- `test_runner_judge_adapter.py` — task-to-template routing including abstention override, unsupported-task rejection, multi-run rejection (single-run protocol lock).
+- `test_runner_orchestrator.py` — full end-to-end loop with fake providers + real `FullContextAdapter`. Covers: primary path (answer + judge produce one record), answer-cache hit skips LLM on second run, judge-cache hit skips judge on second run, `--no-cache` forces regeneration, resume skips completed QA, ingestion-state round-trip.
+- `test_scorecard.py` — KPI shapes, macro vs overall divergence under size skew, SQuAD token-F1 normalization, evidence KPIs when retrieval absent vs. present, replicate stats, public JSON shape lock.
+- `test_render_scorecard.py` — all required markdown sections present.
+- `test_cli_run_cmd.py` — arg parsing, memory-config JSON coercion, required-arg enforcement, unknown-dataset rejection.
+
+### Current State
+
+- Branch: `feat/runner` (not yet merged). Head: `feat(runner,results): orchestrator + manifest + scorecard + amb run CLI`. Built on top of `feat/longmemeval` (which still needs to merge first).
+- Tests: `pytest tests/unit -q` → 268 passed, 1 skipped (`test_symlink_path_on_posix` is Windows-skipped).
+- Lint: `ruff check src tests`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (35 source files).
+- CLI: `amb --version` still works; `amb run --help` lists every documented flag.
+
+### What's Next
+
+- Merge chain: PR-6 → PR-7 (they sit in that order on `feat/runner`).
+- **PR-8** — CLI subcommands: `baseline` (shortcut for `--memory full-context`), `rejudge` (reload stored generations + re-run judge with different model/prompt fingerprint; fingerprint drift should auto-invalidate the judge cache), `compare` (diff two `scorecard.json`), `summarize` (pretty-print `answers.json`), `cache {info|clear|gc}`.
+- PR-9 — LOCOMO loader + LOCOMO judge (10-run majority). Second implementer of `BenchmarkJudge`.
+- PR-10 — HTTP adapter + `openapi.yaml`.
+- PR-11 — BEAM loader + ability-specific judge prompts.
+- PR-12 — noise-aware replicates (K1/K6) + `--publishable` gate + `docs/methodology.md`.
+
+### Open Questions
+
+- **Ollama digest in cache key locked.** `run_benchmark` now calls `provider.resolve_spec()` before manifest construction, so `ollama:llama3.1:8b@sha256:<digest>` flows into the answer cache key automatically.
+- **Evidence-token KPIs are scaffolded but not populated.** The code path collects retrieved/evidence turn IDs and computes turn + unit completeness/density. Token-level completeness/density needs per-turn text recovery to map retrieved text back onto evidence-turn text; implementation deferred since the full-context baseline doesn't retrieve anything meaningful anyway. Revisit in PR-8 or when a real memory system (PythonAdapter against engram) lands.
+- **`--publishable` gate** — not implemented this PR; reserved for PR-12 alongside replicates. M3 guard from PR-4 is still the fallback for cache-version drift.
+- Still open: BEAM evidence-turn field (PR-11).
+
+### Gotchas
+
+- **PR-7 is stacked on PR-6.** Both branches need to merge in order (PR-6 first, then PR-7). Feature work beyond PR-7 can be branched off `feat/runner` as further stacking, or wait for both to land on main.
+- **FullContextAdapter `retrieved=()` → evidence KPIs null.** The null baseline returns no retrieval units, so turn/unit/token evidence metrics are null for every question. That's correct behavior, but it means the first end-to-end scorecard will show `evidence.turn_completeness: null` etc. The non-null numbers only materialize once a memory adapter populates `RetrievedUnit.source_turn_ids`.
+- **Judge cache lookup is benchmark-specific.** `BenchmarkRunner._load_cached_judge` hard-codes LongMemEval template selection because it needs the same template fingerprint the judge used for the write. When LOCOMO / BEAM land, refactor this into the `BenchmarkJudge` protocol (e.g. a `cache_fingerprint(qa)` method) so the orchestrator stays benchmark-agnostic.
+- **`run_benchmark` closes `answer_provider` twice** — once via `adapter.close()` (which owns it for `FullContextAdapter`), once directly. Both ollama and openai close methods are idempotent (they `None`-out the httpx client after the first call). Documented in a code comment near the `try/finally`.
+- **`amb run` catches broad exceptions at the CLI boundary** (`except Exception`) to translate to a printable error + non-zero exit code. Ruff `BLE001` is `# noqa`'d there — this is the right place for it because any failure needs to surface as a CLI error, not a stack trace.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+# Once PR-6 and PR-7 are both merged:
+git checkout main
+git checkout -b feat/cli-subcommands
+# Start PR-8: baseline / rejudge / compare / summarize / cache commands.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-6 LongMemEval loader + judge prompts
 
 ### What Was Done

@@ -72,18 +72,119 @@ Optional — implementing these enables the ingestion cache:
 ## Types the adapter expects back
 
 `AnswerResult` expects the attributes listed above. If your system uses its
-own classes with different names, supply a `--memory-config mapper=pkg.mod:fn`
-that converts your result to the benchmark's shape. Your own `ingest_session`
-input type is also adaptable the same way.
+own classes with different names, supply mapper callables (see next section)
+that translate at the adapter boundary.
+
+## Mapper functions (for divergent type shapes)
+
+`PythonAdapter` accepts two optional callables:
+
+- `session_mapper: Callable[[Session], Any]` — converts the benchmark's
+  `Session` into whatever type your `ingest_session` expects.
+- `result_mapper: Callable[[Any], AnswerResult]` — converts whatever your
+  `answer_question` returns into the benchmark's `AnswerResult`.
+
+These are resolved from the CLI as module-qualified function names using the
+same grammar as `--memory python:pkg.mod:Class`:
+
+```bash
+amb run longmemeval \
+    --memory python:yourpackage.mymem:MyMemory \
+    --session-mapper yourpackage.shim:to_your_session \
+    --result-mapper yourpackage.shim:from_your_result \
+    --memory-config embedding_model=... \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b
+```
+
+Both flags default to identity (pass-through). If your types already match
+the benchmark's shape field-for-field, you don't need either.
+
+## Reference: the engram wrapper shim
+
+Engram ships a multi-layer memory system at `memory.system.MultiLayerMemory`.
+Its class signature diverges from `MemorySystemShape` in two ways:
+
+- It exposes its version as a module-level constant (`MULTI_LAYER_MEMORY_VERSION`)
+  rather than a `memory_version` class attribute, and has no `memory_system_id`.
+- Its `ingest_session` / `answer_question` take engram-specific types whose
+  field names don't match the benchmark's (`DialogueTurn.dia_id` vs.
+  `Turn.turn_id`, `Session.date_time` vs. `Session.session_time`, etc.).
+
+The **design invariant** for this repo is that memory systems have **zero
+knowledge of the benchmark** — no imports from `agent-memory-benchmark`, no
+class attributes added for our benefit. So the shim is a pure benchmark-side
+wrapper class, not a patch to engram:
+
+```python
+# src/agent_memory_benchmark/compat/engram_shim.py
+from memory.system import MULTI_LAYER_MEMORY_VERSION, MultiLayerMemory
+
+class EngramShim:
+    memory_system_id = "engram"
+    memory_version = MULTI_LAYER_MEMORY_VERSION
+
+    def __init__(self, **kwargs):
+        self._inner = MultiLayerMemory(**kwargs)
+
+    async def ingest_session(self, session, case_id):
+        return await self._inner.ingest_session(_to_engram_session(session), case_id)
+
+    async def answer_question(self, question, case_id):
+        raw = await self._inner.answer_question(question, case_id)
+        return _from_engram_answer(raw)
+
+    async def reset(self):
+        return await self._inner.reset()
+```
+
+Invocation:
+
+```bash
+amb run longmemeval \
+    --memory python:agent_memory_benchmark.compat.engram_shim:EngramShim \
+    --memory-config embedding_model=sentence-transformers/all-MiniLM-L6-v2 \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+```
+
+No engram-side changes. `--memory-config` kwargs still flow through to
+`MultiLayerMemory` because the shim's `__init__` forwards them verbatim.
+
+Evidence KPIs are computed by the benchmark via text attribution, so no
+`source_turn_ids` cooperation from engram is required — populating
+`RetrievedUnit.text` with the retrieved chunks is sufficient.
+
+**When to use the wrapper class vs. the mapper-function flags.** The wrapper
+class is the preferred path whenever the target's class signature diverges
+from `MemorySystemShape` in *any* way that isn't purely field-name
+translation. The `--session-mapper` / `--result-mapper` flags above are the
+right tool when the target already matches `MemorySystemShape` structurally
+(has `memory_system_id` / `memory_version` attrs, has the three async
+methods) and only the value types need translating.
 
 ## Evidence-keyed retrieval KPIs
 
-If you populate `retrieved` with `RetrievedUnit` instances that carry
-`source_turn_ids`, the scorer computes turn-level, unit-level, and token-level
-evidence KPIs. When `source_turn_ids` is absent, the scorer falls back to
-substring matching against known turn text; severe mismatch causes turn- and
-unit-level metrics to be reported as `null` for that question. Token metrics
-always work if you populate `text`.
+Evidence KPIs are the benchmark's responsibility, not the memory system's.
+The benchmark holds the evidence turns' text (from the dataset) and receives
+the retrieved units' text (from your `AnswerResult.retrieved`), and computes
+all six evidence metrics — turn/unit/token × completeness/density — by
+matching SQuAD-normalized token multisets.
+
+What this means for you as a memory-system author:
+
+- Populate `RetrievedUnit.text` with the verbatim text your retrieval
+  surfaced. This is the only requirement.
+- Leave `source_turn_ids` empty if you don't track which turn each chunk
+  came from. The benchmark does not consult it for scoring; if you do
+  populate it, we'll store it on `QARecord` as provenance for later
+  diagnostics but never for KPIs.
+- Return an empty `retrieved=()` if you genuinely retrieve nothing (e.g. a
+  full-context baseline that shoves everything into the prompt). Evidence
+  KPIs for questions with empty retrieval are counted in
+  `n_questions_with_retrieval = 0` but not included in the per-question
+  distributions.
 
 ## Pointing the benchmark at your class
 
@@ -96,7 +197,10 @@ amb run longmemeval \
 ```
 
 `--memory-config key=value` entries are passed as keyword arguments to your
-class's `__init__`. Use `--memory-config @path/to.json` to load from a file.
+class's `__init__`. Values are parsed as JSON when the string is valid JSON,
+otherwise kept as strings (so `timeout=30` is an int, `model=llama3` stays a
+string). Use `--session-mapper` / `--result-mapper` for type translation at
+the adapter boundary; see the section above.
 
 ## What "structural typing" buys you
 
