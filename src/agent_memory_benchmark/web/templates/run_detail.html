@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ summary.run_id }} — amb dashboard{% endblock %}
+{% block content %}
+<p><a href="/runs">← Runs</a></p>
+<h1>{{ summary.run_id }}</h1>
+
+<section class="meta-grid">
+    <div><strong>Benchmark:</strong> {{ summary.benchmark or "—" }}</div>
+    <div><strong>Memory:</strong>
+        {{ summary.memory_system_id or "—" }}{% if summary.memory_version %}@{{ summary.memory_version }}{% endif %}
+    </div>
+    <div><strong>Answer model:</strong> <code>{{ summary.answer_model or "—" }}</code></div>
+    <div><strong>Judge model:</strong> <code>{{ summary.judge_model or "—" }}</code></div>
+    <div><strong>Questions:</strong> {{ summary.n_questions if summary.n_questions is not none else "—" }}</div>
+    <div><strong>When:</strong> {{ summary.timestamp or "—" }}</div>
+    {% if summary.tag %}<div><strong>Tag:</strong> {{ summary.tag }}</div>{% endif %}
+</section>
+
+<section class="kpi-row">
+    <div class="kpi">
+        <div class="kpi-label">Overall accuracy</div>
+        <div class="kpi-value">{{ "%.2f%%"|format(summary.overall_accuracy * 100) if summary.overall_accuracy is not none else "—" }}</div>
+    </div>
+    <div class="kpi">
+        <div class="kpi-label">Macro accuracy</div>
+        <div class="kpi-value">{{ "%.2f%%"|format(summary.macro_accuracy * 100) if summary.macro_accuracy is not none else "—" }}</div>
+    </div>
+    <div class="kpi">
+        <div class="kpi-label">Throughput</div>
+        <div class="kpi-value">{{ "%.3f"|format(summary.throughput_qps) if summary.throughput_qps is not none else "—" }} <span class="muted">q/s</span></div>
+    </div>
+</section>
+
+{% set quality = scorecard.get("quality", {}) %}
+{% set per_category = quality.get("per_category", {}) %}
+{% if per_category %}
+<section>
+    <h2>Per-category quality</h2>
+    <table>
+        <thead><tr><th>Bucket</th><th class="num">n</th><th class="num">Accuracy</th><th class="num">Token-F1</th></tr></thead>
+        <tbody>
+        {% for name, cat in per_category.items() %}
+            <tr>
+                <td>{{ name }}</td>
+                <td class="num">{{ cat.get("count", "—") }}</td>
+                <td class="num">{{ "%.2f%%"|format(cat.get("accuracy") * 100) if cat.get("accuracy") is not none else "—" }}</td>
+                <td class="num">{{ "%.2f%%"|format(cat.get("token_f1") * 100) if cat.get("token_f1") is not none else "—" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% set latency = scorecard.get("latency_ms", {}) %}
+{% if latency %}
+<section>
+    <h2>Latency (ms)</h2>
+    <table>
+        <thead><tr><th>Bucket</th><th class="num">mean</th><th class="num">p50</th><th class="num">p95</th><th class="num">max</th><th class="num">n</th></tr></thead>
+        <tbody>
+        {% for key in ["ingestion_per_case", "ingestion_per_session", "retrieval_per_query", "generation_per_query", "answer_total_per_query", "answer_discrepancy", "judge_per_question"] %}
+            {% set dist = latency.get(key) %}
+            {% if dist and dist.get("mean") is not none %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("mean")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("p50")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("p95")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("max")) }}</td>
+                <td class="num">{{ dist.get("n", "—") }}</td>
+            </tr>
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% set footprint = scorecard.get("retrieval_footprint", {}) %}
+{% if footprint %}
+<section>
+    <h2>Retrieval footprint</h2>
+    <table>
+        <thead><tr><th>Metric</th><th class="num">mean</th><th class="num">p50</th><th class="num">p95</th><th class="num">max</th></tr></thead>
+        <tbody>
+        {% for key in ["units_per_query", "tokens_per_query"] %}
+            {% set dist = footprint.get(key) %}
+            {% if dist and dist.get("mean") is not none %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("mean")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("p50")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("p95")) }}</td>
+                <td class="num">{{ "%.1f"|format(dist.get("max")) }}</td>
+            </tr>
+            {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if scorecard_md %}
+<section>
+    <h2>scorecard.md</h2>
+    <pre class="raw-md">{{ scorecard_md }}</pre>
+</section>
+{% endif %}
+
+<section class="actions">
+    <a href="/runs/{{ summary.run_id }}/scorecard.json">Raw scorecard.json</a>
+    <a href="/runs/{{ summary.run_id }}/meta.json">Raw meta.json</a>
+</section>
+{% endblock %}

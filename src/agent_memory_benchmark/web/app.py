@@ -53,11 +53,19 @@ def web_deps_available() -> tuple[bool, str | None]:
 def create_app(config: WebConfig) -> FastAPI:
     """Build the FastAPI app instance.
 
-    Later steps register routers for runs, compare, and jobs; right now
-    only ``/health`` exists so the CLI stub is end-to-end testable.
+    Registers the runs router + static + templates. Later steps add
+    compare and jobs routers; ``/health`` stays as a cheap liveness probe.
     """
 
     from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.templating import Jinja2Templates
+
+    from .index import ResultIndex
+    from .routes.runs import build_router as build_runs_router
+
+    here = Path(__file__).parent
+    templates = Jinja2Templates(directory=str(here / "templates"))
 
     app = FastAPI(
         title="agent-memory-benchmark dashboard",
@@ -66,6 +74,11 @@ def create_app(config: WebConfig) -> FastAPI:
         redoc_url=None,
     )
     app.state.config = config
+    app.state.result_index = ResultIndex(config.results_dir)
+    app.state.templates = templates
+
+    app.mount("/static", StaticFiles(directory=str(here / "static")), name="static")
+    app.include_router(build_runs_router(templates))
 
     @app.get("/health")
     def health() -> dict[str, object]:
