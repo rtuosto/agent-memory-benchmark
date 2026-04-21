@@ -84,7 +84,12 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 "scorecard": detail.scorecard,
                 "meta": detail.meta,
                 "scorecard_md": detail.scorecard_md,
-                "chart_data_json": _json.dumps(build_chart_data(detail.scorecard)),
+                "chart_data_json": _json.dumps(
+                    build_chart_data(
+                        detail.scorecard,
+                        baseline_detail.scorecard if baseline_detail else None,
+                    )
+                ),
                 "baseline_summary": baseline_summary,
                 "baseline_mode": baseline_mode,  # "auto" | "manual" | "none"
                 "candidates": candidates,
@@ -106,10 +111,10 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
 
 
 def _resolve_baseline(
-    index: "ResultIndex",
-    detail: "RunDetail",
+    index: ResultIndex,
+    detail: RunDetail,
     requested: str | None,
-) -> tuple["RunSummary | None", "RunDetail | None", str]:
+) -> tuple[RunSummary | None, RunDetail | None, str]:
     """Pick the baseline run to compare against, honoring the query param.
 
     Returns ``(summary, detail, mode)``:
