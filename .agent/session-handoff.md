@@ -5,6 +5,72 @@
 
 ---
 
+## Session: 2026-04-20 — PR-7.5 mapper CLI flags + engram wrapper shim
+
+### What Was Done
+
+**PR-7.5 (on `feat/runner`, stacked atop PR-7):** landed two complementary additions that together make it possible to benchmark engram end-to-end with zero engram-side changes.
+
+- `src/agent_memory_benchmark/adapters/factory.py` — `resolve_adapter` now accepts `session_mapper` / `result_mapper` kwargs and forwards them to `PythonAdapter.from_spec`. Passing mappers with `full-context` is an explicit `AdapterSpecError` (no silent drop).
+- `src/agent_memory_benchmark/runner/__init__.py` — new `_resolve_callable(spec, *, flag)` helper that resolves `"pkg.module:function"` strings via `importlib` with flag-name-aware errors (missing colon / empty sides / ImportError / missing attribute / non-callable target). `run_benchmark(...)` accepts `session_mapper_spec` / `result_mapper_spec` string kwargs and resolves them once at assembly time.
+- `src/agent_memory_benchmark/cli/run_cmd.py` — new `--session-mapper pkg.mod:fn` / `--result-mapper pkg.mod:fn` CLI flags threaded through to `run_benchmark`.
+- `src/agent_memory_benchmark/compat.py` → `src/agent_memory_benchmark/compat/__init__.py` via `git mv` (history preserved) so `compat/` can hold per-memory-system shims.
+- `src/agent_memory_benchmark/compat/engram_shim.py` — `EngramShim` wrapper class. Declares `memory_system_id: ClassVar[str] = "engram"` on the class itself and reads `memory_version` from engram's `MULTI_LAYER_MEMORY_VERSION` module constant at `__init__` time. Holds an inner `MultiLayerMemory`, translates types at the boundary. Import of `memory.system` is *lazy* (inside `__init__`) so the shim module stays importable when engram isn't installed. `__init__(**kwargs)` forwards to `MultiLayerMemory(**kwargs)` so existing `--memory-config` plumbing works unchanged.
+- `_to_engram_session` / `_from_engram_answer` mappers. Session translation tries `benchmark.datasets.locomo.Session` / `DialogueTurn` first, falls back to local duck-typed classes (`_DuckSession` / `_DuckTurn`) with `__slots__` for the required attribute names. Answer mapper reads attributes permissively (`getattr(raw, ..., default)`) so minor engram schema shifts don't break things; if engram starts populating `retrieved` with `source_turn_ids`, it flows through unchanged.
+
+**Tests (22 new; 290 total):**
+- `test_compat_engram_shim.py` — shim instantiation without engram raises a targeted `ImportError`, duck-fallback triggers when `benchmark.datasets.locomo` isn't importable, field-name mapping round-trip (including `None` image_caption), answer mapper builds `AnswerResult` from duck-typed objects, preserves `retrieved` when present, tolerates missing optional fields + coerces null timings.
+- `test_runner_mapper_resolution.py` — every error path on `_resolve_callable`, and a parametrize asserting the flag name appears in every error.
+- `test_adapters_factory.py` updates — mapper kwargs forward to `PythonAdapter`; full-context rejects mapper kwargs.
+- `test_cli_run_cmd.py` updates — `--session-mapper` / `--result-mapper` captured on the namespace; default to `None` when omitted.
+
+**Invocation (the payoff):**
+
+```bash
+amb run longmemeval \
+    --memory python:agent_memory_benchmark.compat.engram_shim:EngramShim \
+    --memory-config embedding_model=sentence-transformers/all-MiniLM-L6-v2 \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+```
+
+### Current State
+
+- Branch: `feat/runner` (not yet merged). Three PR-level commits (`d4500d3` PR-7 impl, `45ddb5f` handoff, `6748a2d` docs, `d1029af` docs correction, `e6099c3` PR-7.5 impl).
+- Tests: 290 passed, 1 skipped (POSIX-only symlink test).
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (36 source files).
+
+### What's Next
+
+- Merge chain: PR-6 → PR-7 → PR-7.5. All sit in order on `feat/runner`.
+- **PR-8** — CLI subcommands unchanged in scope.
+
+### Open Questions
+
+- **When to ship a real engram integration test** — the shim is currently only unit-tested (engram not installed in this repo's venv). The right place for a real-engram smoke test is `tests/integration/` with a conditional skip when engram isn't on `PYTHONPATH`. Probably folds in alongside PR-13's integration-test work with recorded HTTP fixtures.
+- **Evidence KPIs on engram runs** — will stay `null` until engram populates `RetrievedUnit.source_turn_ids`. That's an engram-side change, not in scope for this repo.
+
+### Gotchas
+
+- **Duck-typed engram session.** The shim's `_DuckSession` / `_DuckTurn` fallback relies on engram's code doing attribute access, not `isinstance(session, Session)` checks. If engram ever tightens to `isinstance`, the fallback needs to be replaced with a subclass of the real types (requires engram be importable, which restricts test coverage). The duck objects use `__slots__` to match the minimal shape exactly.
+- **`_resolve_callable` runs at assembly time**, before the adapter opens. So bad mapper specs surface *before* any LLM connection is made — the error message says which flag was wrong and why.
+- **Mapper function path vs. wrapper class path.** Docs spell out the distinction: wrapper class for any class-signature divergence (missing `memory_system_id`, different method names), mapper flags only when the target already matches `MemorySystemShape` structurally and just the *value types* need translating.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+# Once PR-6 / PR-7 / PR-7.5 are all merged:
+git checkout main
+git checkout -b feat/cli-subcommands
+# Start PR-8: baseline / rejudge / compare / summarize / cache commands.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-7 runner + manifest + scorecard + `amb run`
 
 ### What Was Done
