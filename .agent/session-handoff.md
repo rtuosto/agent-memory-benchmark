@@ -5,6 +5,36 @@
 
 ---
 
+## Session: 2026-04-20 — Evidence attribution: benchmark owns the math
+
+### What Was Done
+
+**Correction commit (`7a0e916` on `feat/runner`, stacked atop PR-7.5):** evidence KPIs are now computed by the benchmark itself via text attribution rather than depending on memory systems to self-report `RetrievedUnit.source_turn_ids`. Architectural motivation: the benchmark is a measurement instrument; measurements shouldn't be delegated to the thing being measured. The benchmark already has everything it needs — dataset-derived evidence turn text + `RetrievedUnit.text` from the adapter.
+
+- `QARecord` gains `evidence_texts: list[str]` (populated by the runner from `case.sessions` at record-creation time, looked up by `turn_id`) and `retrieved_texts: list[str]` (projected from `AnswerResult.retrieved[*].text`). `evidence_turn_ids` / `retrieved_turn_ids` kept for diagnostics only.
+- `results/scorecard.py::_evidence_stats` rewritten around SQuAD-normalized token multiset attribution. `EVIDENCE_COVERAGE_THRESHOLD = 0.5` — a retrieved unit "covers" an evidence turn when their multiset intersection ≥ 50% of the evidence turn's token count. All six plan KPIs (turn/unit × completeness/density + token × completeness/density) compute from text alone. Turn and unit numbers collapse onto each other under text attribution (there's no per-unit turn mapping) — they're kept as distinct JSON keys so a future adapter with reliable source-turn mappings can specialize.
+- `runner/orchestrator.py` gets a `_evidence_texts(case, qa)` helper that looks up turn IDs in `case.sessions`. Unknown IDs silently skipped (dataset schema drift shouldn't abort the run).
+- `compat/engram_shim.py` docstring + `docs/compat.md` + `docs/ARCHITECTURE.md` + plan file all updated: memory systems only need to populate `RetrievedUnit.text`; the benchmark handles attribution.
+
+**Tests (292 total, still 1 skipped):** 4 new evidence-specific tests including `does_not_depend_on_retrieved_turn_ids` and `token_density_penalizes_noisy_retrieval`; orchestrator test verifies `evidence_texts` is populated from the case not the adapter.
+
+### Current State
+
+- Branch: `feat/runner`. Latest: `7a0e916`.
+- Tests: 292 passed, 1 skipped.
+- Lint/format/types all clean.
+
+### Impact on Engram Path
+
+Before this correction, PR-7.5 docs implied evidence KPIs would stay `null` until engram populated `source_turn_ids`. After the correction, evidence KPIs work out of the box against any memory system that populates `RetrievedUnit.text` — which engram already does for any non-empty retrieval.
+
+### Gotchas
+
+- **`EVIDENCE_COVERAGE_THRESHOLD = 0.5` is a judgment call.** Half the evidence turn's tokens must reappear in a single retrieved unit for that turn to count as "covered." Too strict → paraphrased/summarized retrievals undercount. Too loose → trivial token overlap false-positives. Exposed as a module constant so it can be tuned from tests; not CLI-exposed yet (revisit if calibration work in PR-12 says it matters).
+- **Turn and unit metrics are equal under text attribution.** This is documented in `_evidence_stats` but worth remembering when reading scorecards — the turn_* / unit_* distinction only matters if we later add a source_turn_ids-aware path.
+
+---
+
 ## Session: 2026-04-20 — PR-7.5 mapper CLI flags + engram wrapper shim
 
 ### What Was Done
