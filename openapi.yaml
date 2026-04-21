@@ -1,0 +1,315 @@
+openapi: 3.0.3
+info:
+  title: agent-memory-benchmark HTTP adapter contract
+  version: "0.1.0"
+  description: |
+    REST surface a memory system exposes so that `HttpAdapter` can benchmark
+    it with zero Python-level coupling. Any service that implements these
+    endpoints is drop-in benchmarkable via `amb run <dataset> --memory
+    http(s)://host:port`.
+
+    The benchmark never inspects memory-system-internal state; it only needs
+    identity, one write path (ingest), one read path (answer), a reset hook,
+    and — optionally — a way to snapshot and restore state for the ingestion
+    cache.
+  license:
+    name: MIT
+servers:
+  - url: http://localhost:8000
+    description: Local development
+paths:
+  /v1/identity:
+    get:
+      summary: Report memory-system identity.
+      description: |
+        Must be callable before any ingest/answer request. The benchmark
+        hashes `memory_system_id` and `memory_version` into cache keys and
+        records them in the run manifest, so both values must be stable for
+        any given build of the service.
+      responses:
+        "200":
+          description: Identity payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Identity"
+              example:
+                memory_system_id: "example-mem"
+                memory_version: "1.4.2"
+                protocol_version: "0.1"
+                supports_persistence: false
+        "500":
+          $ref: "#/components/responses/Error"
+  /v1/ingest:
+    post:
+      summary: Ingest one Session for a case.
+      description: |
+        Sessions arrive in chronological order (`session_index` strictly
+        increasing within a `case_id`). The benchmark does not interleave
+        cases: every session for a given `case_id` arrives back-to-back
+        before the first `answer_question` for that case.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+      responses:
+        "200":
+          description: Ingest accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ack"
+        "204":
+          description: Ingest accepted (no body).
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /v1/answer:
+    post:
+      summary: Produce one answer for the case's question.
+      description: |
+        The service performs its own retrieval and generation; the benchmark
+        independently measures wall time, so `retrieval_time_ms` and
+        `generation_time_ms` are informational self-reports.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerRequest"
+      responses:
+        "200":
+          description: Answer payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnswerResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+  /v1/reset:
+    post:
+      summary: Drop all state.
+      description: |
+        Called between case groups (and by `amb cache clear` paths). After a
+        successful reset the service MUST behave as if no `ingest` had ever
+        happened.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Reset accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ack"
+        "204":
+          description: Reset accepted (no body).
+        "500":
+          $ref: "#/components/responses/Error"
+  /v1/state:
+    get:
+      summary: Snapshot internal state as opaque bytes (optional).
+      description: |
+        Only required when `supports_persistence=true` in `/v1/identity`.
+        The benchmark writes the body verbatim as `state.bin` inside the
+        ingestion cache; a later `PUT /v1/state` feeds those same bytes
+        back. The body format is entirely the service's choice.
+      responses:
+        "200":
+          description: State bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "501":
+          description: Persistence not supported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      summary: Restore state from previously-snapshotted bytes (optional).
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: State restored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ack"
+        "204":
+          description: State restored (no body).
+        "400":
+          $ref: "#/components/responses/Error"
+        "501":
+          description: Persistence not supported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    Identity:
+      type: object
+      required: [memory_system_id, memory_version]
+      properties:
+        memory_system_id:
+          type: string
+          description: Stable slug for the memory system (e.g. "engram").
+        memory_version:
+          type: string
+          description: |
+            Bumped whenever ingestion semantics or stored-state shape change.
+            Flows into ingestion-cache keys; callers with a stale cache on
+            disk will auto-miss when this value changes.
+        protocol_version:
+          type: string
+          description: HTTP-API protocol version the service implements.
+          example: "0.1"
+        supports_persistence:
+          type: boolean
+          default: false
+          description: |
+            Whether `GET /v1/state` / `PUT /v1/state` are implemented. The
+            benchmark only exercises state I/O when this is true.
+    Turn:
+      type: object
+      required: [turn_id, speaker, text]
+      properties:
+        turn_id:
+          type: string
+          description: Stable within a case; evidence annotations reference it.
+        speaker:
+          type: string
+        text:
+          type: string
+        timestamp:
+          type: string
+          nullable: true
+        image_caption:
+          type: string
+          nullable: true
+          description: BLIP caption (LOCOMO only); null for other datasets.
+    Session:
+      type: object
+      required: [session_index, turns]
+      properties:
+        session_index:
+          type: integer
+          minimum: 1
+        session_time:
+          type: string
+          nullable: true
+        session_id:
+          type: string
+          nullable: true
+        turns:
+          type: array
+          items:
+            $ref: "#/components/schemas/Turn"
+    IngestRequest:
+      type: object
+      required: [case_id, session]
+      properties:
+        case_id:
+          type: string
+        session:
+          $ref: "#/components/schemas/Session"
+    AnswerRequest:
+      type: object
+      required: [case_id, question]
+      properties:
+        case_id:
+          type: string
+        question:
+          type: string
+    RetrievedUnit:
+      type: object
+      required: [unit_id, text]
+      properties:
+        unit_id:
+          type: string
+          description: Opaque to the benchmark; used only for diagnostics.
+        text:
+          type: string
+          description: |
+            Verbatim context handed to generation. Drives evidence KPIs via
+            SQuAD-normalized token attribution against the dataset's
+            evidence-turn text — populate this whenever retrieval is
+            non-empty or the evidence metrics will stay at zero.
+        score:
+          type: number
+          format: float
+          nullable: true
+        source_turn_ids:
+          type: array
+          items:
+            type: string
+          description: |
+            Optional provenance. Stored on `QARecord` but NOT consulted by
+            the scorer — evidence KPIs come from text attribution, not
+            self-reports.
+    AnswerResponse:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+        retrieval_time_ms:
+          type: number
+          format: float
+          default: 0.0
+        generation_time_ms:
+          type: number
+          format: float
+          default: 0.0
+        units_retrieved:
+          type: integer
+          default: 0
+        tokens_retrieved:
+          type: integer
+          default: 0
+          description: Approximate context-token count handed to the answerer.
+        retrieved:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetrievedUnit"
+          default: []
+    Ack:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          default: true
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+          nullable: true
+  responses:
+    Error:
+      description: Error payload.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

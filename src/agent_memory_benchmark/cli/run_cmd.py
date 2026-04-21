@@ -103,6 +103,15 @@ def _add_shared_run_arguments(
             help="Key=value pairs forwarded to the adapter. Repeat as needed.",
         )
         parser.add_argument(
+            "--memory-header",
+            action="append",
+            default=[],
+            metavar="NAME=VALUE",
+            help="HTTP header sent with every request to an http(s):// memory "
+            "adapter (e.g. Authorization=Bearer ...). Repeat as needed; "
+            "not valid with non-HTTP adapters.",
+        )
+        parser.add_argument(
             "--session-mapper",
             metavar="pkg.module:function",
             help="Callable that converts benchmark Session objects before ingest. "
@@ -161,8 +170,10 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
     # baseline_cmd calls through here with memory-specific flags absent;
     # fill in the full-context defaults so downstream code doesn't branch.
     raw_memory_config = getattr(args, "memory_config", []) or []
+    raw_memory_headers = getattr(args, "memory_header", []) or []
     try:
         memory_config = _parse_memory_config(raw_memory_config)
+        memory_headers = _parse_memory_headers(raw_memory_headers)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -187,6 +198,7 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
                 memory_config=memory_config or None,
                 session_mapper_spec=session_mapper,
                 result_mapper_spec=result_mapper,
+                http_headers=memory_headers or None,
                 results_base=args.out,
                 cache_root=args.cache_root,
                 tag=args.tag,
@@ -245,6 +257,26 @@ def _parse_memory_config(items: list[str]) -> dict[str, Any]:
     return config
 
 
+def _parse_memory_headers(items: list[str]) -> dict[str, str]:
+    """Parse ``--memory-header NAME=VALUE`` entries into an HTTP headers dict.
+
+    Values are passed through verbatim — JSON coercion would mangle a
+    legitimate ``Authorization: Bearer …`` token. Duplicate header names
+    keep the last value (matching argparse's normal last-wins shape).
+    """
+
+    headers: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"--memory-header entry {item!r} must be NAME=VALUE")
+        name, _, value = item.partition("=")
+        name = name.strip()
+        if not name:
+            raise ValueError(f"--memory-header entry {item!r} has empty name")
+        headers[name] = value
+    return headers
+
+
 def _render_summary(run_dir: Any) -> None:
     from ..results.render import print_scorecard_rich
     from ..results.scorecard import build_scorecard
@@ -261,6 +293,7 @@ def _render_summary(run_dir: Any) -> None:
 
 __all__ = [
     "_add_shared_run_arguments",
+    "_parse_memory_headers",
     "_resolve_num_ctx",
     "add_run_subparser",
     "run_command",

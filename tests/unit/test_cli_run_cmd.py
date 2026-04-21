@@ -15,6 +15,7 @@ import pytest
 from agent_memory_benchmark.cli.main import build_parser
 from agent_memory_benchmark.cli.run_cmd import (
     _parse_memory_config,
+    _parse_memory_headers,
     _resolve_num_ctx,
     add_run_subparser,
 )
@@ -43,6 +44,51 @@ def test_parse_memory_config_rejects_missing_equals() -> None:
 def test_parse_memory_config_rejects_empty_key() -> None:
     with pytest.raises(ValueError, match="empty key"):
         _parse_memory_config(["=value"])
+
+
+def test_parse_memory_headers_passes_values_verbatim() -> None:
+    """Header values must NOT go through JSON coercion; a bearer token
+    containing ``=`` or braces would be corrupted otherwise."""
+
+    headers = _parse_memory_headers(
+        [
+            "Authorization=Bearer eyJhbGciOi=JWT",
+            "X-Request-Id=amb-42",
+        ]
+    )
+    assert headers["Authorization"] == "Bearer eyJhbGciOi=JWT"
+    assert headers["X-Request-Id"] == "amb-42"
+
+
+def test_parse_memory_headers_rejects_missing_equals() -> None:
+    with pytest.raises(ValueError, match="must be NAME=VALUE"):
+        _parse_memory_headers(["BadHeader"])
+
+
+def test_parse_memory_headers_rejects_empty_name() -> None:
+    with pytest.raises(ValueError, match="empty name"):
+        _parse_memory_headers(["=value"])
+
+
+def test_parser_accepts_memory_header_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "http://localhost:8000",
+            "--memory-header",
+            "Authorization=Bearer X",
+            "--memory-header",
+            "X-Run=1",
+            "--answer-model",
+            "ollama:x",
+            "--judge-model",
+            "ollama:y",
+        ]
+    )
+    assert args.memory_header == ["Authorization=Bearer X", "X-Run=1"]
 
 
 def test_parser_rejects_missing_required_args() -> None:

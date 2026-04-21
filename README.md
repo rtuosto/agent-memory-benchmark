@@ -31,9 +31,21 @@ amb run locomo \
     --answer-model ollama:llama3.1:8b \
     --judge-model ollama:llama3.1:70b \
     --judge-runs 10 --limit 1
+
+# Remote memory system over HTTP — contract in openapi.yaml / docs/http-api.md.
+amb run longmemeval \
+    --memory http://localhost:8000 \
+    --memory-header Authorization="Bearer ${TOKEN}" \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
 ```
 
 `amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`). BEAM lands in PR-11.
+
+Service authors who want to be benchmarkable over the network implement the
+four required endpoints documented in [`docs/http-api.md`](docs/http-api.md)
+(schema: [`openapi.yaml`](openapi.yaml)).
 
 ## Status
 
