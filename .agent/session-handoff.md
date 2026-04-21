@@ -5,6 +5,60 @@
 
 ---
 
+## Session: 2026-04-20 — PR-4 cache layer
+
+### What Was Done
+
+**PR-4 cache layer (on `feat/cache-layer`, branched from `main` after the PR-3 merge):**
+
+- `src/agent_memory_benchmark/cache/keys.py` — byte-stable key derivation ported from `~/code/agent-memory/benchmark/cache.py`:
+  - `SEPARATOR = b"\x1e"` (ASCII RS) between UTF-8 parts, with a trailing separator after the final part. Part ordering matches the predecessor exactly.
+  - `answer_key` takes optional `replicate_idx`; `idx=0` omits the trailing part so single-run digests remain predecessor-compatible. `idx>0` appends `str(idx)` — the one deliberate divergence, kept at the end of the parts tuple.
+  - Numeric fields frozen: judge temperature as `f"{t:.6f}"`, runs as `str(int)`. Question-type/id `"{t or ''}|{id or ''}"` framing preserved.
+- `cache/index.py` — `cache_index.json` CRUD: `load_index` (corruption-safe), `index_touch`, `CacheIndexWriter` batch writer, `clear_all` / `clear_kind`, and `gc_older_than` for `amb cache gc --before 30d`. GC normalizes the `%Y-%m-%dT%H:%M:%SZ` UTC timestamps we write by subtracting `time.timezone`.
+- `cache/m3_guard.py` — publish-time safety: walks `<root>/answers/*.json`, flags any entry whose stored `memory_version` differs from the adapter's current value, or whose payload is non-dict / unparseable. Entries belonging to other memory systems are skipped.
+- `.gitignore` — anchored `cache/`, `results/`, `data/` with leading `/` so they no longer shadow same-named Python modules under `src/`. The unanchored pattern was silently blocking `git add src/agent_memory_benchmark/cache/`. Documented in `.agent/lessons.md`.
+
+**Tests (46 new; 101 total):**
+- `test_cache_keys.py` — hex-digest goldens for `hash_parts`/`ingestion_key`/`answer_key` (both replicate-idx branches) / `judge_key` (with and without type/id); trailing-separator framing check; UTF-8 multibyte stability; temperature-format equivalences (`0`, `0.0`, `0.000000`); path-layout + slash sanitization.
+- `test_cache_index.py` — corruption-safe load, touch/overwrite, batch writer idempotency, clear helpers, `gc_older_than` edge cases (missing-on-disk, unparseable timestamp, absolute-path entries, negative-age rejection).
+- `test_cache_m3_guard.py` — empty/all-matching/mismatch/other-system/unreadable/non-dict/missing-version/sorted-output paths.
+
+### Current State
+
+- Branch: `feat/cache-layer` (not yet merged). Head commit: `feat(cache): byte-stable keys, index, and M3 publish guard`.
+- Tests: `pytest` → 101 passed.
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (15 source files).
+
+### What's Next
+
+- **PR-5** — Adapters: `adapters/base.py` `MemoryAdapter` ABC, `adapters/python_adapter.py` with structural-type check against `MemorySystemShape`, `adapters/full_context.py` null baseline. The cache layer is already wired to accept `replicate_idx` so the runner can drive noise-aware replicates once PR-5 lands the adapter plumbing.
+- PR-6 → PR-7 → PR-8 unchanged from prior plan.
+
+### Open Questions
+
+- **Replicate semantics locked.** `answer_key(..., replicate_idx=0)` is byte-exact with the predecessor; `replicate_idx>0` appends `str(idx)`. Resolves plan open-question #4.
+- Still open: BEAM evidence-turn field name (PR-11); PythonAdapter type translation strategy (PR-5).
+
+### Gotchas
+
+- **`.gitignore` anchor trap.** Unanchored runtime-output ignores (`cache/`) shadow in-package modules with the same name. Always anchor top-level runtime dirs with a leading slash. Captured as the first entry in `.agent/lessons.md`.
+- **GC timestamp arithmetic on Windows.** `time.mktime(time.strptime(...))` interprets the struct as **local time**; our stored timestamps are UTC-`Z`. The fix is `epoch -= time.timezone` after `mktime`. Verified in `test_removes_old_and_keeps_fresh`.
+- **Cache-key byte-exactness locks are real.** The hex-digest goldens in `test_cache_keys.py` will fail noisily on any accidental algorithm drift. Pair that with a migration note + bumped digests if the change is intentional.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main       # once PR-4 is merged
+git checkout -b feat/adapters
+# Start PR-5: MemoryAdapter ABC + PythonAdapter + FullContextAdapter.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-3 LLM providers
 
 ### What Was Done

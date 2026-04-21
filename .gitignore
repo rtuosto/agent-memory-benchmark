@@ -44,9 +44,12 @@ ENV/
 *.egg-info/
 
 # Benchmark runtime output (git-ignored; results belong in CI artifacts or user-specified dirs)
-cache/
-results/
-data/
+# Anchored to the repo root with a leading slash so they do NOT shadow the
+# in-package ``src/agent_memory_benchmark/cache/`` module or any other
+# same-named directory nested inside the source tree.
+/cache/
+/results/
+/data/
 *.cache
 .ollama_cache/
 
