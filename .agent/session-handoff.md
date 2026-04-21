@@ -5,6 +5,75 @@
 
 ---
 
+## Session: 2026-04-20 — PR-7 runner + manifest + scorecard + `amb run`
+
+### What Was Done
+
+**PR-7 (on `feat/runner`, branched from `feat/longmemeval` — PR-6 is still unmerged, so PR-7 is stacked atop it and will ride in after PR-6 merges):**
+
+- `runner/manifest.py` — `QARecord` (one row per question, with runner- + adapter-measured timings + `answer_discrepancy_ms` drift signal + `evidence_turn_ids` / `retrieved_turn_ids` for the evidence KPIs), `RunManifest` (every field needed to reproduce the run — model specs + resolved digests, dataset descriptor hash + HF revision, judge prompt fingerprint, benchmark git state, full CLI argv, protocol version 0.1), `RunDir` (typed wrapper for `answers.json` / `meta.json` / `scorecard.{json,md}`), `save_run_file` / `load_run_file` (forward-compat: unknown fields on disk are dropped).
+- `runner/latest.py` — `update_latest_pointer` tries symlink → Windows junction → `latest.txt` fallback. Never hard-fails; preserves a real `latest/` directory if present.
+- `runner/judge_adapter.py` — `BenchmarkJudge` Protocol + `LongMemEvalJudge` concrete class. The judge returns the *template* fingerprint (not the formatted prompt) so re-baselining a template invalidates the right cohort. LongMemEval rejects `--judge-runs > 1` at construction time since upstream protocol is single-run yes/no.
+- `runner/orchestrator.py` — `BenchmarkRunner`: the ingest → answer → judge loop. Cache-aware for all three caches, resume-aware via `answers.json` keys, writes the run file after each QA so Ctrl-C is safe. `_load_cached_judge` mirrors the write path exactly so cache-hit lookups always find what was written.
+- `runner/__init__.py` — `run_benchmark(...)` assembly-time entry point. Resolves git state, provider specs (Ollama digest pinning via `resolve_spec`), builds the `RunManifest`, opens/closes the adapter + both providers with `try/finally`, and calls `_finalize_artifacts` to produce `scorecard.{json,md}` + update `results/latest`.
+- `results/scorecard.py` — four KPI families per plan: **quality** (overall + macro accuracy, token-F1 with SQuAD-style normalization, per-category), **wall-time perf** with `{mean, p50, p95, max}` distributions for every timing bucket + the `answer_discrepancy_ms` drift signal, **retrieval footprint** (units + tokens per query), **evidence KPIs** (turn/unit/token × completeness/density), plus the `throughput.queries_per_sec` / `throughput.sessions_per_sec` headline. `scorecard_to_dict` locks the public JSON shape (tested).
+- `results/render.py` — `render_scorecard_markdown` for `scorecard.md` (throughput headline → quality → per-category → latency → retrieval footprint → evidence KPIs → methodology) + `print_scorecard_rich` for the console. `rich` import is lazy so `build_scorecard` stays pure-stdlib.
+- `cli/run_cmd.py` + `cli/main.py` — `amb run <dataset> ...` with every knob from the plan. `--memory-config KEY=VALUE` parses values as JSON when possible, strings otherwise (so `timeout=30` is an int, `model=llama3` stays a string).
+
+**Tests (60 new; 268 total; 1 skipped on Windows):**
+- `test_runner_manifest.py` — save/load roundtrip, drop-unknown forward-compat, path-component sanitization (including `...` → `unnamed`), directory name composition.
+- `test_runner_latest.py` — POSIX symlink success (skipped on win32), real-directory preservation, `latest.txt` fallback when symlink + junction both fail, Windows permission-denied simulation.
+- `test_runner_judge_adapter.py` — task-to-template routing including abstention override, unsupported-task rejection, multi-run rejection (single-run protocol lock).
+- `test_runner_orchestrator.py` — full end-to-end loop with fake providers + real `FullContextAdapter`. Covers: primary path (answer + judge produce one record), answer-cache hit skips LLM on second run, judge-cache hit skips judge on second run, `--no-cache` forces regeneration, resume skips completed QA, ingestion-state round-trip.
+- `test_scorecard.py` — KPI shapes, macro vs overall divergence under size skew, SQuAD token-F1 normalization, evidence KPIs when retrieval absent vs. present, replicate stats, public JSON shape lock.
+- `test_render_scorecard.py` — all required markdown sections present.
+- `test_cli_run_cmd.py` — arg parsing, memory-config JSON coercion, required-arg enforcement, unknown-dataset rejection.
+
+### Current State
+
+- Branch: `feat/runner` (not yet merged). Head: `feat(runner,results): orchestrator + manifest + scorecard + amb run CLI`. Built on top of `feat/longmemeval` (which still needs to merge first).
+- Tests: `pytest tests/unit -q` → 268 passed, 1 skipped (`test_symlink_path_on_posix` is Windows-skipped).
+- Lint: `ruff check src tests`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (35 source files).
+- CLI: `amb --version` still works; `amb run --help` lists every documented flag.
+
+### What's Next
+
+- Merge chain: PR-6 → PR-7 (they sit in that order on `feat/runner`).
+- **PR-8** — CLI subcommands: `baseline` (shortcut for `--memory full-context`), `rejudge` (reload stored generations + re-run judge with different model/prompt fingerprint; fingerprint drift should auto-invalidate the judge cache), `compare` (diff two `scorecard.json`), `summarize` (pretty-print `answers.json`), `cache {info|clear|gc}`.
+- PR-9 — LOCOMO loader + LOCOMO judge (10-run majority). Second implementer of `BenchmarkJudge`.
+- PR-10 — HTTP adapter + `openapi.yaml`.
+- PR-11 — BEAM loader + ability-specific judge prompts.
+- PR-12 — noise-aware replicates (K1/K6) + `--publishable` gate + `docs/methodology.md`.
+
+### Open Questions
+
+- **Ollama digest in cache key locked.** `run_benchmark` now calls `provider.resolve_spec()` before manifest construction, so `ollama:llama3.1:8b@sha256:<digest>` flows into the answer cache key automatically.
+- **Evidence-token KPIs are scaffolded but not populated.** The code path collects retrieved/evidence turn IDs and computes turn + unit completeness/density. Token-level completeness/density needs per-turn text recovery to map retrieved text back onto evidence-turn text; implementation deferred since the full-context baseline doesn't retrieve anything meaningful anyway. Revisit in PR-8 or when a real memory system (PythonAdapter against engram) lands.
+- **`--publishable` gate** — not implemented this PR; reserved for PR-12 alongside replicates. M3 guard from PR-4 is still the fallback for cache-version drift.
+- Still open: BEAM evidence-turn field (PR-11).
+
+### Gotchas
+
+- **PR-7 is stacked on PR-6.** Both branches need to merge in order (PR-6 first, then PR-7). Feature work beyond PR-7 can be branched off `feat/runner` as further stacking, or wait for both to land on main.
+- **FullContextAdapter `retrieved=()` → evidence KPIs null.** The null baseline returns no retrieval units, so turn/unit/token evidence metrics are null for every question. That's correct behavior, but it means the first end-to-end scorecard will show `evidence.turn_completeness: null` etc. The non-null numbers only materialize once a memory adapter populates `RetrievedUnit.source_turn_ids`.
+- **Judge cache lookup is benchmark-specific.** `BenchmarkRunner._load_cached_judge` hard-codes LongMemEval template selection because it needs the same template fingerprint the judge used for the write. When LOCOMO / BEAM land, refactor this into the `BenchmarkJudge` protocol (e.g. a `cache_fingerprint(qa)` method) so the orchestrator stays benchmark-agnostic.
+- **`run_benchmark` closes `answer_provider` twice** — once via `adapter.close()` (which owns it for `FullContextAdapter`), once directly. Both ollama and openai close methods are idempotent (they `None`-out the httpx client after the first call). Documented in a code comment near the `try/finally`.
+- **`amb run` catches broad exceptions at the CLI boundary** (`except Exception`) to translate to a printable error + non-zero exit code. Ruff `BLE001` is `# noqa`'d there — this is the right place for it because any failure needs to surface as a CLI error, not a stack trace.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+# Once PR-6 and PR-7 are both merged:
+git checkout main
+git checkout -b feat/cli-subcommands
+# Start PR-8: baseline / rejudge / compare / summarize / cache commands.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-6 LongMemEval loader + judge prompts
 
 ### What Was Done
