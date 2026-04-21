@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,7 +202,7 @@ def _read_text(path: Path) -> str:
 def _summarize(path: Path, scorecard: dict[str, Any], meta: dict[str, Any]) -> RunSummary:
     quality = scorecard.get("quality", {}) if isinstance(scorecard, dict) else {}
     throughput = scorecard.get("throughput", {}) if isinstance(scorecard, dict) else {}
-    timestamp = _extract_timestamp(path.name)
+    timestamp = _extract_timestamp(path.name) or _mtime_iso(path)
     return RunSummary(
         run_id=path.name,
         path=path,
@@ -219,6 +219,24 @@ def _summarize(path: Path, scorecard: dict[str, Any], meta: dict[str, Any]) -> R
         throughput_qps=_float_or_none(throughput.get("queries_per_sec")),
         complete=bool(scorecard) and bool(meta),
     )
+
+
+def _mtime_iso(path: Path) -> str | None:
+    """Fallback timestamp for runs whose dir name has no ``YYYY-MM-DD_HHMMSS`` prefix.
+
+    Legacy / hand-named dirs (e.g. ``smoke-probe``, ``lme-3b-30q``)
+    still deserve a When column that renders as a datetime rather than
+    the raw slug. We use the directory mtime — close enough to
+    "created" for a never-rewritten scorecard output dir, and always
+    available. Emitted as UTC ISO so the browser-side localizer does
+    the right thing.
+    """
+
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _extract_timestamp(run_id: str) -> str | None:

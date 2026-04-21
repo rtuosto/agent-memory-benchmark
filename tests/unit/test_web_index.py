@@ -153,3 +153,22 @@ def test_cache_invalidates_on_mtime_bump(tmp_path: Path) -> None:
 def test_list_empty_when_results_dir_missing(tmp_path: Path) -> None:
     index = ResultIndex(tmp_path / "does-not-exist")
     assert index.list_runs() == []
+
+
+def test_timestamp_falls_back_to_mtime_for_unnamed_runs(tmp_path: Path) -> None:
+    """Dirs without a ``YYYY-MM-DD_HHMMSS_...`` prefix should still get a
+    When value so the UI doesn't show a raw slug in the datetime column."""
+
+    _write_run(
+        tmp_path,
+        "smoke-probe",
+        scorecard=_sample_scorecard(),
+        meta=_sample_meta(),
+    )
+    runs = ResultIndex(tmp_path).list_runs()
+    assert len(runs) == 1
+    ts = runs[0].timestamp
+    assert ts is not None
+    # mtime-derived stamps emit as UTC ISO with Z so the browser can localize.
+    assert ts.endswith("Z")
+    assert "T" in ts
