@@ -5,6 +5,64 @@
 
 ---
 
+## Session: 2026-04-20 — PR-6 LongMemEval loader + judge prompts
+
+### What Was Done
+
+**PR-6 (on `feat/longmemeval`, branched from `main` after the PR-5 merge):**
+
+- `src/agent_memory_benchmark/datasets/base.py` — `DatasetAdapter` ABC: `__iter__` yields `BenchmarkCase`, `__len__`, `descriptor_hash()` flows into cache keys.
+- `datasets/longmemeval.py` — HF `xiaowu0162/longmemeval-cleaned` loader. HF revision pinned to `98d7416c24c778c2fee6e6f3006e7a073259d48f` (2025-09-19) via `resolve/<revision>/<filename>` URL — no floating `main` loads. `load_s()` pulls the S split over HTTP through the HF URL; `load_m_local()` reads the multi-GB M file from disk. Lazy `from datasets import load_dataset` inside the loader functions so the module imports cleanly on machines where pandas can't load (Windows App Control on this host blocks the pandas DLL). Row converter `_row_to_case` produces `BenchmarkCase` with `Turn(turn_id=f"{session_id}:{idx}")`, expands `answer_session_ids` to every turn inside those sessions as `evidence_turn_ids`, and records abstention as `metadata["abstention"]` ("1"/"0"). `_stratified_indices` ports the predecessor's proportional-allocation + deterministic round-robin selector. `descriptor_hash` = sha256 of `(name, split, revision, f"{applied_strategy}:{limit|all}")` joined with `\x1e`.
+- `datasets/__init__.py` — `load_dataset(name, **kwargs)` dispatcher. LOCOMO / BEAM raise `DatasetUnavailableError` with "PR-9" / "PR-11" messages.
+- `judge/prompts.py` — `fingerprint(template)` = sha256 of UTF-8 bytes. `combined_fingerprint(dict)` = order-independent bundle digest (keys sorted, `\x1e`-joined) that will feed the judge cache key in PR-7.
+- `judge/longmemeval.py` — five byte-exact templates (`LME_GENERAL_TEMPLATE`, `LME_TEMPORAL_TEMPLATE`, `LME_KNOWLEDGE_UPDATE_TEMPLATE`, `LME_PREFERENCE_TEMPLATE`, `LME_ABSTENTION_TEMPLATE`). `longmemeval_anscheck_prompt(task, q, a, r, *, abstention)` routes task → template and calls `.format(q, a, r)`. `is_abstention_question(qid)` implements the upstream `"_abs" in qid` convention. `parse_yes_no` uses a word-boundary regex (`yes`, not `yesterday`).
+- `judge/__init__.py` — re-exports the public surface.
+
+**Byte-exact verification:** each of the five templates was sha256'd and cross-verified against the predecessor `~/code/agent-memory/benchmark/judge.py` at PR-6 commit time. Combined bundle fingerprint: `33013a6ed6390a0d3aaf520ab1c1fda47c345241b34a47a007ae2362d2eb5628`.
+
+**Tests (61 new; 209 total):**
+- `test_judge_prompts_stable.py` — parametrized SHA-256 lock per template + combined-bundle lock + placeholder-count + trailing-sentence invariants + `combined_fingerprint` order-independence.
+- `test_judge_longmemeval.py` — task-routing dispatch, abstention override, unsupported-task error, `is_abstention_question`, yes/no parser with word-boundary edge cases.
+- `test_longmemeval_loader.py` — row-to-case conversion (turn IDs, evidence, integer/None answers, abstention metadata, whitespace stripping, length-mismatch guard), stratified vs. head selection, descriptor-hash stability + drift detection across revision/split/limit/strategy, `load_dataset` dispatcher errors.
+
+**Drive-by fix:** `adapters/base.py` — `# noqa: B027` on the no-op default `close()` (ruff B027 flagged it on the new ruff pin used in this session; the no-op default is intentional because not every adapter needs teardown).
+
+### Current State
+
+- Branch: `feat/longmemeval` (not yet merged). Single commit to follow the handoff commit.
+- Tests: `pytest tests/unit -q` → 209 passed.
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (26 source files).
+
+### What's Next
+
+- **PR-7** — Runner + manifest + scorecard. First end-to-end demo wires `FullContextAdapter` + `OllamaProvider` + `JudgeClient` + LongMemEval loader + cache + manifest. `amb run longmemeval --memory full-context --answer-model ollama:llama3.1:8b --judge-model ollama:llama3.1:70b --split s --limit 5`.
+- PR-8 → PR-14 unchanged.
+
+### Open Questions
+
+- Still open: BEAM evidence-turn field name (PR-11); Ollama-digest-in-manifest timing — finalize when PR-7 wires `provider.resolve_spec()`.
+- **Revision re-pin cadence.** We pinned `98d7416c…` as the current HF head at PR-6 time. If upstream publishes fixes, re-pin happens as a deliberate migration (descriptor_hash changes → caches invalidate). Document when/if we bump.
+
+### Gotchas
+
+- **`datasets` import is lazy.** `from datasets import load_dataset` happens inside the loader functions, not at module scope, because pandas is blocked by Windows App Control on this host. Tests build HF-shaped dicts by hand and exercise `_row_to_case` + `LongMemEvalDataset.__init__` directly — no round-trip through HF.
+- **Evidence granularity is session-level in upstream LongMemEval.** The loader expands every turn inside an `answer_session_ids` session into `evidence_turn_ids` because that's the best the dataset annotates. Turn-level evidence metrics on LongMemEval therefore measure "did we retrieve something from the right *session*", not "the exact right turn".
+- **Abstention routing is via question_id, not task.** `"_abs" in question_id` is the upstream convention; `longmemeval_anscheck_prompt` takes the flag as a bool so the caller (runner) can compute it once per question.
+- **Re-baselining judge prompts is a migration, not an edit.** Any change to a template requires: bump the golden fingerprint in `test_judge_prompts_stable.py`, bump `protocol_version`, note the migration in `docs/methodology.md`. The fingerprint flows into the judge cache key so prior entries auto-invalidate.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main          # once PR-6 is merged
+git checkout -b feat/runner
+# Start PR-7: orchestrator + manifest + scorecard; first amb run demo.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-5 adapters
 
 ### What Was Done
