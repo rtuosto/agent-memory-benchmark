@@ -19,9 +19,12 @@ in the exception message.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from dateutil import parser as _dateparser
 
 from ..llm import LLMProvider
 from ..types import AnswerResult, RetrievedUnit, Session
@@ -29,6 +32,8 @@ from .base import MemoryAdapter
 
 if TYPE_CHECKING:
     from engram import EngramGraphMemorySystem, RecallResult
+
+_log = logging.getLogger(__name__)
 
 
 _DEFAULT_SYSTEM_PROMPT = (
@@ -71,6 +76,7 @@ class EngramAdapter(MemoryAdapter):
     async def ingest_session(self, session: Session, case_id: str) -> None:
         from engram import Memory
 
+        session_ts = _normalize_timestamp(session.session_time)
         for turn in session.turns:
             metadata: list[tuple[str, str]] = [
                 ("case_id", case_id),
@@ -81,9 +87,10 @@ class EngramAdapter(MemoryAdapter):
                 metadata.append(("session_id", session.session_id))
             if turn.image_caption:
                 metadata.append(("image_caption", turn.image_caption))
+            turn_ts = _normalize_timestamp(turn.timestamp) or session_ts
             memory = Memory(
                 content=turn.text,
-                timestamp=turn.timestamp or session.session_time,
+                timestamp=turn_ts,
                 speaker=turn.speaker,
                 source="conversation_turn",
                 metadata=tuple(sorted(metadata)),
@@ -160,6 +167,27 @@ def _format_recall_context(result: RecallResult) -> str:
     if not lines:
         lines.append("(no memories retrieved)")
     return "\n".join(lines).rstrip()
+
+
+def _normalize_timestamp(raw: str | None) -> str | None:
+    """Coerce an arbitrary timestamp string to ISO-8601, or ``None``.
+
+    Engram resolves timestamps with :func:`datetime.datetime.fromisoformat`,
+    which rejects the LongMemEval format (``"2023/05/20 (Sat) 02:21"``) and
+    anything else that isn't strict ISO. We try :mod:`dateutil.parser` for a
+    best-effort conversion; on failure we drop the timestamp rather than
+    blowing up ingest — engram treats ``None`` as "only relative ordering
+    available," which is the correct fallback for un-parseable input.
+    """
+
+    if raw is None or not raw.strip():
+        return None
+    try:
+        parsed = _dateparser.parse(raw, fuzzy=True)
+    except (ValueError, OverflowError, TypeError) as exc:
+        _log.debug("dropping unparseable timestamp %r: %s", raw, exc)
+        return None
+    return str(parsed.isoformat())
 
 
 def _passages_to_units(result: RecallResult) -> tuple[RetrievedUnit, ...]:

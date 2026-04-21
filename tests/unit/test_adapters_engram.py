@@ -24,6 +24,7 @@ import pytest
 from agent_memory_benchmark.adapters.engram_adapter import (
     EngramAdapter,
     _format_recall_context,
+    _normalize_timestamp,
     _passages_to_units,
 )
 from agent_memory_benchmark.adapters.factory import AdapterSpecError, resolve_adapter
@@ -188,11 +189,11 @@ def test_ingest_session_emits_one_memory_per_turn(fake_engram_module: None) -> N
     first, second = engram.ingested
     assert first.content == "hello"
     assert first.speaker == "alice"
-    assert first.timestamp == "2024-01-01T10:00"
+    assert first.timestamp == "2024-01-01T10:00:00"
     assert first.source == "conversation_turn"
     assert second.content == "hi back"
     # turn has no timestamp of its own → falls back to session_time.
-    assert second.timestamp == "2024-01-01"
+    assert second.timestamp == "2024-01-01T00:00:00"
 
 
 def test_ingest_session_metadata_sorted_and_includes_case_id(fake_engram_module: None) -> None:
@@ -209,6 +210,54 @@ def test_ingest_session_metadata_sorted_and_includes_case_id(fake_engram_module:
     # Sorted invariant — metadata is hashable and deterministic.
     keys = [k for k, _ in engram.ingested[0].metadata]
     assert keys == sorted(keys)
+
+
+def test_ingest_session_normalizes_longmemeval_timestamp(fake_engram_module: None) -> None:
+    """LongMemEval ships timestamps like ``2023/05/20 (Sat) 02:21`` — engram
+    rejects those with ``fromisoformat``. The adapter must coerce to ISO."""
+
+    engram = _FakeEngram()
+    adapter = EngramAdapter(_FakeProvider(), target=engram)
+    session = Session(
+        session_index=1,
+        turns=(Turn(turn_id="t1", speaker="alice", text="hi", timestamp=None),),
+        session_time="2023/05/20 (Sat) 02:21",
+    )
+    asyncio.run(adapter.ingest_session(session, case_id="c"))
+    ts = engram.ingested[0].timestamp
+    assert ts is not None
+    assert ts.startswith("2023-05-20T02:21")
+
+
+def test_ingest_session_drops_unparseable_timestamp(fake_engram_module: None) -> None:
+    engram = _FakeEngram()
+    adapter = EngramAdapter(_FakeProvider(), target=engram)
+    session = Session(
+        session_index=1,
+        turns=(Turn(turn_id="t1", speaker="a", text="hi", timestamp="not-a-date-at-all"),),
+        session_time=None,
+    )
+    asyncio.run(adapter.ingest_session(session, case_id="c"))
+    assert engram.ingested[0].timestamp is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected_prefix",
+    [
+        ("2024-01-01T10:00", "2024-01-01T10:00"),
+        ("2023/05/20 (Sat) 02:21", "2023-05-20T02:21"),
+        ("2024-01-01", "2024-01-01T00:00:00"),
+    ],
+)
+def test_normalize_timestamp_parses_common_formats(raw: str, expected_prefix: str) -> None:
+    result = _normalize_timestamp(raw)
+    assert result is not None
+    assert result.startswith(expected_prefix)
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "totally unparseable gibberish"])
+def test_normalize_timestamp_drops_empty_or_unparseable(raw: str | None) -> None:
+    assert _normalize_timestamp(raw) is None
 
 
 def test_ingest_session_propagates_image_caption(fake_engram_module: None) -> None:
