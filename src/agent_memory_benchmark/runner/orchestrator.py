@@ -294,6 +294,8 @@ class BenchmarkRunner:
             tokens_retrieved=answer.tokens_retrieved,
             evidence_turn_ids=list(qa.evidence_turn_ids),
             retrieved_turn_ids=_retrieved_turn_ids(answer),
+            evidence_texts=_evidence_texts(case, qa),
+            retrieved_texts=[unit.text for unit in answer.retrieved],
             metadata=dict(qa.metadata),
         )
 
@@ -419,7 +421,12 @@ def _record_key(case_id: str, qa_index: int, replicate_idx: int) -> str:
 
 
 def _retrieved_turn_ids(answer: AnswerResult) -> list[str]:
-    """Union of ``source_turn_ids`` across retrieved units, preserving order."""
+    """Union of ``source_turn_ids`` across retrieved units, preserving order.
+
+    Informational only — stored on :class:`QARecord` for diagnostics. The
+    scorer does NOT use these IDs for evidence attribution; it works from
+    retrieved + evidence text (see :func:`_evidence_texts`).
+    """
 
     seen: dict[str, None] = {}
     for unit in answer.retrieved:
@@ -427,6 +434,28 @@ def _retrieved_turn_ids(answer: AnswerResult) -> list[str]:
             if tid not in seen:
                 seen[tid] = None
     return list(seen.keys())
+
+
+def _evidence_texts(case: BenchmarkCase, qa: QAItem) -> list[str]:
+    """Look up the verbatim text of each evidence turn in ``case``.
+
+    The benchmark owns evidence attribution, so we materialize the evidence
+    texts at record-creation time rather than asking the memory system to
+    report which turns it retrieved. Text is looked up by ``turn_id`` across
+    every session in ``case.sessions`` — LongMemEval's ``answer_session_ids``
+    convention expands to every turn within those sessions, so missing IDs
+    should be rare in practice.
+
+    Unknown evidence turn IDs are silently skipped rather than erroring —
+    dataset schema drift shouldn't abort the whole run. The resulting list
+    can be shorter than ``qa.evidence_turn_ids``; the scorer tolerates that.
+    """
+
+    turn_text: dict[str, str] = {}
+    for session in case.sessions:
+        for turn in session.turns:
+            turn_text[turn.turn_id] = turn.text
+    return [turn_text[tid] for tid in qa.evidence_turn_ids if tid in turn_text]
 
 
 __all__ = ["BenchmarkRunner"]

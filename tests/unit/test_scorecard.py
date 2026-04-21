@@ -33,6 +33,8 @@ def _record(
     tokens: int = 1000,
     evidence_turn_ids: list[str] | None = None,
     retrieved_turn_ids: list[str] | None = None,
+    evidence_texts: list[str] | None = None,
+    retrieved_texts: list[str] | None = None,
     replicate_idx: int = 0,
     judge_time_ms: float = 200.0,
 ) -> QARecord:
@@ -60,6 +62,8 @@ def _record(
         tokens_retrieved=tokens,
         evidence_turn_ids=evidence_turn_ids or [],
         retrieved_turn_ids=retrieved_turn_ids or [],
+        evidence_texts=evidence_texts or [],
+        retrieved_texts=retrieved_texts or [],
         judge_time_ms=judge_time_ms,
         judge_runs=judge_runs,
     )
@@ -146,14 +150,15 @@ def test_throughput_queries_per_sec_is_reported() -> None:
     assert sc.throughput_queries_per_sec == pytest.approx(4 / (4 * 0.5))
 
 
-def test_evidence_stats_report_zero_when_no_retrieval() -> None:
-    """FullContext adapter returns no retrieved units → evidence KPIs skip."""
+def test_evidence_stats_report_counts_when_no_retrieval_text() -> None:
+    """FullContext adapter returns no retrieved units → unit-level KPIs skip."""
 
     records = [
         _record(
             key="q1::0",
             evidence_turn_ids=["sess_1:1"],
-            retrieved_turn_ids=[],
+            evidence_texts=["the shell necklace is important"],
+            retrieved_texts=[],
         ),
     ]
     sc = build_scorecard(records)
@@ -163,22 +168,74 @@ def test_evidence_stats_report_zero_when_no_retrieval() -> None:
     assert sc.evidence.turn_completeness is None
 
 
-def test_evidence_stats_compute_when_retrieval_present() -> None:
+def test_evidence_stats_compute_by_text_attribution() -> None:
+    """Benchmark owns attribution: match retrieved text against evidence text."""
+
     records = [
         _record(
             key="q1::0",
             evidence_turn_ids=["t1", "t2"],
-            retrieved_turn_ids=["t1", "t3"],
+            evidence_texts=[
+                "the shell necklace is blue",
+                "we watched the sunset together",
+            ],
+            retrieved_texts=[
+                "a user mentioned shell necklace blue earlier",  # covers t1
+                "completely unrelated noise content",  # covers nothing
+            ],
         ),
     ]
     sc = build_scorecard(records)
     assert sc.evidence is not None
     assert sc.evidence.turn_completeness is not None
-    # completeness = |{t1}| / |{t1, t2}| = 0.5
+    # t1 is covered (shell/necklace/blue overlap), t2 isn't → 1/2
     assert sc.evidence.turn_completeness.mean == pytest.approx(0.5)
-    # density = |{t1}| / |{t1, t3}| = 0.5
-    assert sc.evidence.turn_density is not None
-    assert sc.evidence.turn_density.mean == pytest.approx(0.5)
+    # 1 of 2 retrieved units touches an evidence turn → 0.5 density
+    assert sc.evidence.unit_density is not None
+    assert sc.evidence.unit_density.mean == pytest.approx(0.5)
+    # Token-level metrics computed from union intersection.
+    assert sc.evidence.token_completeness is not None
+    assert sc.evidence.token_completeness.mean > 0.0
+    assert sc.evidence.token_density is not None
+    assert sc.evidence.token_density.mean > 0.0
+
+
+def test_evidence_does_not_depend_on_retrieved_turn_ids() -> None:
+    """Memory systems that never populate source_turn_ids still get KPIs."""
+
+    records = [
+        _record(
+            key="q1::0",
+            evidence_turn_ids=["t1"],
+            evidence_texts=["shell necklace"],
+            retrieved_turn_ids=[],  # intentionally empty — should not matter
+            retrieved_texts=["shell necklace conversation excerpt"],
+        ),
+    ]
+    sc = build_scorecard(records)
+    assert sc.evidence is not None
+    assert sc.evidence.turn_completeness is not None
+    assert sc.evidence.turn_completeness.mean == pytest.approx(1.0)
+
+
+def test_evidence_token_density_penalizes_noisy_retrieval() -> None:
+    """A huge retrieval bag with only a sliver of evidence → low density."""
+
+    records = [
+        _record(
+            key="q1::0",
+            evidence_turn_ids=["t1"],
+            evidence_texts=["shell necklace"],
+            retrieved_texts=[
+                "shell necklace " + "filler word " * 100,
+            ],
+        ),
+    ]
+    sc = build_scorecard(records)
+    assert sc.evidence is not None
+    assert sc.evidence.token_density is not None
+    # Only 2 evidence tokens in a retrieval of ~200 tokens → very low density
+    assert sc.evidence.token_density.mean < 0.05
 
 
 def test_replicate_stats_require_multiple_replicate_ids() -> None:

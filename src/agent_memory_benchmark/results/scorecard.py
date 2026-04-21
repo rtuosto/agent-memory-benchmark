@@ -8,9 +8,14 @@ Four families, per plan:
    the ``answer_discrepancy`` drift signal.
 3. **Retrieval footprint** — units and tokens retrieved per query.
 4. **Retrieval quality vs evidence annotations** — six KPIs (turn/unit/
-   token × completeness/density) derived from ``evidence_turn_ids`` vs.
-   ``retrieved_turn_ids``. Falls back to ``None`` when the adapter doesn't
-   populate ``source_turn_ids``.
+   token × completeness/density) computed by the benchmark itself via
+   text attribution. The benchmark holds the evidence turns' text (from
+   the dataset) and the retrieved units' text (from the adapter's
+   ``AnswerResult.retrieved``) and matches them with SQuAD-normalized
+   token overlap. Memory systems are NOT required to self-report which
+   turn each retrieved unit came from — ``RetrievedUnit.source_turn_ids``
+   is stored on ``QARecord`` as provenance if provided, but scoring does
+   not depend on it.
 5. **Throughput** — ``queries_per_sec`` / ``sessions_per_sec`` headline
    scalars that show up at the top of the markdown scorecard.
 
@@ -320,7 +325,46 @@ def token_f1(prediction: str, reference: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+EVIDENCE_COVERAGE_THRESHOLD = 0.5
+"""Minimum token-overlap fraction for an evidence turn to count as "covered".
+
+A retrieved unit "covers" an evidence turn when the multiset intersection of
+their SQuAD-normalized tokens is at least this fraction of the evidence
+turn's token count. 0.5 (half the evidence turn's tokens reappearing in a
+retrieved unit) balances paraphrase-tolerance against false positives; the
+constant is exposed so tests and tuning can reference it directly.
+"""
+
+
 def _evidence_stats(records: list[QARecord]) -> EvidenceStats:
+    """Compute evidence KPIs via benchmark-owned text attribution.
+
+    The benchmark attributes retrieval to evidence by matching normalized
+    token multisets — memory systems only need to return the *text* they
+    retrieved. ``RetrievedUnit.source_turn_ids`` (if populated) is stored
+    on :class:`QARecord` as provenance but is *not* used here.
+
+    Six KPIs, per plan:
+
+    - ``turn_completeness`` = fraction of evidence turns covered (recall).
+    - ``turn_density`` = fraction of retrieved units touching any evidence
+      turn (same as ``unit_density`` under text attribution — no per-unit
+      turn mapping exists without source IDs).
+    - ``unit_completeness`` = same as ``turn_completeness`` under text
+      attribution (both count covered evidence turns over total evidence).
+    - ``unit_density`` = fraction of retrieved units touching evidence.
+    - ``token_completeness`` = recalled evidence tokens / total evidence
+      tokens (token-level recall).
+    - ``token_density`` = recalled evidence tokens / total retrieved tokens
+      (token-level precision).
+
+    Turn- and unit-level numbers collapse onto each other under text
+    attribution. If a future adapter provides reliable per-unit source
+    turn mappings, the two could diverge; for now we report them as
+    distinct keys so the JSON shape matches the plan while flagging the
+    equivalence in the docstring.
+    """
+
     turn_comps: list[float] = []
     turn_dens: list[float] = []
     unit_comps: list[float] = []
@@ -332,35 +376,88 @@ def _evidence_stats(records: list[QARecord]) -> EvidenceStats:
     n_with_retrieval = 0
 
     for rec in records:
-        if rec.evidence_turn_ids:
+        has_evidence = bool(rec.evidence_texts)
+        has_retrieval = bool(rec.retrieved_texts)
+        if has_evidence:
             n_with_evidence += 1
-        if rec.retrieved_turn_ids:
+        if has_retrieval:
             n_with_retrieval += 1
+        if not (has_evidence and has_retrieval):
+            continue
 
-        if rec.evidence_turn_ids and rec.retrieved_turn_ids:
-            evidence = set(rec.evidence_turn_ids)
-            retrieved = set(rec.retrieved_turn_ids)
-            intersect = evidence & retrieved
-            turn_comps.append(len(intersect) / len(evidence))
-            turn_dens.append(len(intersect) / len(retrieved))
-            # Unit metrics degrade to turn metrics when we don't have
-            # per-unit source_turn_ids stored separately (we fold them
-            # into retrieved_turn_ids above); track them as the same
-            # numbers here. A richer unit-level aggregator lands in PR-8
-            # alongside ``RetrievedUnit`` persistence.
-            unit_comps.append(len(intersect) / len(evidence))
-            unit_dens.append(len(intersect) / len(retrieved))
+        evidence_token_lists = [normalize_answer(t).split() for t in rec.evidence_texts]
+        retrieved_token_lists = [normalize_answer(t).split() for t in rec.retrieved_texts]
+
+        evidence_token_lists = [tl for tl in evidence_token_lists if tl]
+        retrieved_token_lists = [tl for tl in retrieved_token_lists if tl]
+        if not evidence_token_lists or not retrieved_token_lists:
+            continue
+
+        evidence_counters = [collections.Counter(tl) for tl in evidence_token_lists]
+        retrieved_counters = [collections.Counter(tl) for tl in retrieved_token_lists]
+
+        covered_evidence = 0
+        for e_tokens, e_counter in zip(evidence_token_lists, evidence_counters, strict=True):
+            if any(
+                _coverage_fraction(r_counter, e_counter, len(e_tokens))
+                >= EVIDENCE_COVERAGE_THRESHOLD
+                for r_counter in retrieved_counters
+            ):
+                covered_evidence += 1
+
+        units_touching = 0
+        for r_counter in retrieved_counters:
+            if any(
+                _coverage_fraction(r_counter, e_counter, len(e_tokens))
+                >= EVIDENCE_COVERAGE_THRESHOLD
+                for e_tokens, e_counter in zip(evidence_token_lists, evidence_counters, strict=True)
+            ):
+                units_touching += 1
+
+        completeness = covered_evidence / len(evidence_token_lists)
+        density = units_touching / len(retrieved_token_lists)
+        turn_comps.append(completeness)
+        unit_comps.append(completeness)
+        turn_dens.append(density)
+        unit_dens.append(density)
+
+        retrieved_union: collections.Counter[str] = collections.Counter()
+        for r_counter in retrieved_counters:
+            retrieved_union.update(r_counter)
+        evidence_union: collections.Counter[str] = collections.Counter()
+        for e_counter in evidence_counters:
+            evidence_union.update(e_counter)
+        recalled = sum((retrieved_union & evidence_union).values())
+        total_evidence_tokens = sum(evidence_union.values())
+        total_retrieved_tokens = sum(retrieved_union.values())
+        if total_evidence_tokens:
+            tok_comps.append(recalled / total_evidence_tokens)
+        if total_retrieved_tokens:
+            tok_dens.append(recalled / total_retrieved_tokens)
 
     return EvidenceStats(
         turn_completeness=_distribution(turn_comps),
         turn_density=_distribution(turn_dens),
         unit_completeness=_distribution(unit_comps),
         unit_density=_distribution(unit_dens),
-        token_completeness=_distribution(tok_comps) if tok_comps else None,
-        token_density=_distribution(tok_dens) if tok_dens else None,
+        token_completeness=_distribution(tok_comps),
+        token_density=_distribution(tok_dens),
         n_questions_with_evidence=n_with_evidence,
         n_questions_with_retrieval=n_with_retrieval,
     )
+
+
+def _coverage_fraction(
+    retrieved: collections.Counter[str],
+    evidence: collections.Counter[str],
+    evidence_total: int,
+) -> float:
+    """Fraction of evidence tokens present in a retrieved-unit multiset."""
+
+    if evidence_total == 0:
+        return 0.0
+    overlap = sum((retrieved & evidence).values())
+    return overlap / evidence_total
 
 
 def scorecard_to_dict(sc: Scorecard) -> dict[str, Any]:

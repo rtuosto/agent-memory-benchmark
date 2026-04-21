@@ -71,8 +71,21 @@ class QARecord:
     units_retrieved: int = 0
     tokens_retrieved: int = 0
 
+    # Bookkeeping only — the scorer does not use these to derive evidence
+    # KPIs. Evidence attribution is computed by the benchmark itself from
+    # ``evidence_texts`` (dataset-derived) and ``retrieved_texts``
+    # (adapter-returned), so memory systems don't have to self-report which
+    # turn each retrieved unit came from.
     evidence_turn_ids: list[str] = field(default_factory=list)
     retrieved_turn_ids: list[str] = field(default_factory=list)
+
+    # The two fields the scorer actually consumes for evidence KPIs.
+    # ``evidence_texts[i]`` is the verbatim text of the turn at
+    # ``evidence_turn_ids[i]``, looked up from the case's sessions at record
+    # creation time. ``retrieved_texts[i]`` is the verbatim text of the i-th
+    # retrieved unit the adapter returned.
+    evidence_texts: list[str] = field(default_factory=list)
+    retrieved_texts: list[str] = field(default_factory=list)
 
     judge_time_ms: float = 0.0
     judge_runs: list[dict[str, Any]] = field(default_factory=list)

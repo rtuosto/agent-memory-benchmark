@@ -192,6 +192,11 @@ def test_end_to_end_single_case(tmp_path: Path) -> None:
     assert rec.units_retrieved == 2
     assert rec.tokens_retrieved > 0
     assert rec.evidence_turn_ids == ["t1"]
+    # Benchmark-owned evidence attribution: the orchestrator looks up the
+    # evidence turn's text from the case rather than asking the adapter.
+    assert rec.evidence_texts == ["I love shell necklaces."]
+    # FullContext returns no retrieved units; retrieved_texts therefore empty.
+    assert rec.retrieved_texts == []
     # answers.json was persisted.
     assert runner._run_dir.answers_path.is_file()  # noqa: SLF001 (test accesses internal path)
     payload = json.loads(runner._run_dir.answers_path.read_text(encoding="utf-8"))  # noqa: SLF001

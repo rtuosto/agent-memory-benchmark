@@ -152,10 +152,9 @@ amb run longmemeval \
 No engram-side changes. `--memory-config` kwargs still flow through to
 `MultiLayerMemory` because the shim's `__init__` forwards them verbatim.
 
-Evidence-keyed KPIs will report `null` until engram's own retrieval layer
-populates `RetrievedUnit.source_turn_ids` on returned units. Quality, latency,
-footprint, and throughput KPIs all work in the meantime — tracked as an
-engram-side improvement, not a benchmark prerequisite.
+Evidence KPIs are computed by the benchmark via text attribution, so no
+`source_turn_ids` cooperation from engram is required — populating
+`RetrievedUnit.text` with the retrieved chunks is sufficient.
 
 **When to use the wrapper class vs. the mapper-function flags.** The wrapper
 class is the preferred path whenever the target's class signature diverges
@@ -167,12 +166,25 @@ methods) and only the value types need translating.
 
 ## Evidence-keyed retrieval KPIs
 
-If you populate `retrieved` with `RetrievedUnit` instances that carry
-`source_turn_ids`, the scorer computes turn-level, unit-level, and token-level
-evidence KPIs. When `source_turn_ids` is absent, the scorer falls back to
-substring matching against known turn text; severe mismatch causes turn- and
-unit-level metrics to be reported as `null` for that question. Token metrics
-always work if you populate `text`.
+Evidence KPIs are the benchmark's responsibility, not the memory system's.
+The benchmark holds the evidence turns' text (from the dataset) and receives
+the retrieved units' text (from your `AnswerResult.retrieved`), and computes
+all six evidence metrics — turn/unit/token × completeness/density — by
+matching SQuAD-normalized token multisets.
+
+What this means for you as a memory-system author:
+
+- Populate `RetrievedUnit.text` with the verbatim text your retrieval
+  surfaced. This is the only requirement.
+- Leave `source_turn_ids` empty if you don't track which turn each chunk
+  came from. The benchmark does not consult it for scoring; if you do
+  populate it, we'll store it on `QARecord` as provenance for later
+  diagnostics but never for KPIs.
+- Return an empty `retrieved=()` if you genuinely retrieve nothing (e.g. a
+  full-context baseline that shoves everything into the prompt). Evidence
+  KPIs for questions with empty retrieval are counted in
+  `n_questions_with_retrieval = 0` but not included in the per-question
+  distributions.
 
 ## Pointing the benchmark at your class
 

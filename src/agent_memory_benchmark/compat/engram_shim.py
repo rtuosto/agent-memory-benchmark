@@ -16,9 +16,11 @@ the benchmark. Engram's ``MultiLayerMemory`` diverges from
 This module bridges both entirely on the benchmark side — no engram patches.
 The wrapper class :class:`EngramShim` declares the required identity attrs
 itself, holds an inner ``MultiLayerMemory``, and translates types at the
-boundary. Engram-side population of ``RetrievedUnit.source_turn_ids`` is a
-separate engram-side improvement that unblocks evidence-keyed KPIs; without
-it, quality / latency / footprint / throughput KPIs still work.
+boundary. Evidence KPIs are computed by the benchmark via text attribution,
+so as long as engram populates ``RetrievedUnit.text`` for the chunks it
+retrieved, all five KPI families work without any further engram
+cooperation. ``RetrievedUnit.source_turn_ids`` is stored on ``QARecord`` as
+provenance if engram populates it, but the scorer does not consult it.
 
 **Duck-typed sessions on ingest.** The shim tries to import engram's real
 ``benchmark.datasets.locomo.Session`` / ``DialogueTurn`` first and falls

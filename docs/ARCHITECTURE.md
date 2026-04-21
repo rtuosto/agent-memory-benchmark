@@ -137,7 +137,7 @@ Ollama must be running locally for integration tests that use it:
 
 | System | Status | Notes |
 |--------|--------|-------|
-| `memory.system.MultiLayerMemory` (engram) | Wrapper shim in PR-7.5 (`compat/engram_shim.py`) | `EngramShim` wrapper class; zero engram-side changes. Evidence KPIs remain null until engram populates `source_turn_ids` on retrieved units (separate engram-side follow-up, non-blocking). |
+| `memory.system.MultiLayerMemory` (engram) | Wrapper shim in PR-7.5 (`compat/engram_shim.py`) | `EngramShim` wrapper class; zero engram-side changes. Evidence KPIs work as long as engram returns retrieved chunks with `text` populated — the benchmark attributes them to evidence turns itself. |
 
 ## Related
 
