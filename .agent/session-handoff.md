@@ -18,7 +18,7 @@
 - `cli/cache_cmd.py` — nested subcommands `info | clear | gc`. `info` prints per-kind entry counts + bytes on disk + index file size. `clear --kind {ingestion|answers|judge|all}` requires `--yes` as a typo guard. `gc --before AGE` accepts `7d` / `12h` / `30m` / bare-float-as-days via `_parse_duration_days`.
 - `cli/main.py` — registers all six subcommands; dispatch table maps command name to handler.
 
-**Tests (new files; 74 new cases; 430 total):**
+**Tests (new files; 65 new cases; 356 passed + 1 skipped):**
 - `test_cli_baseline_cmd.py` — parser rejects `--memory` on baseline, shares other run-style flags, handler fills in `memory="full-context"` before dispatching to `run_command`.
 - `test_cli_rejudge_cmd.py` — helper behavior (`_qa_from_record`, unsupported-benchmark rejection), missing/corrupt input handling, happy-path writes all four artifacts with the new judge's verdict, judge cache population behind `--no-cache`, default out-dir is sibling `rejudged_<ts>/`.
 - `test_cli_compare_cmd.py` — delta formatters, per-category union, evidence section shown only when present, benchmark-mismatch flag, end-to-end happy path + error paths.
@@ -29,7 +29,7 @@
 ### Current State
 
 - Branch: `feat/cli-subcommands`. HEAD commit pending (see below — commit after this write).
-- Tests: 356 → 430 passed, still 1 skipped (POSIX-only symlink).
+- Tests: 356 passed (up from 292 post-merge of PR-7.5), 1 skipped (POSIX-only symlink).
 - Lint: `ruff check src tests` → clean.
 - Types: `mypy src` → clean on 41 source files.
 - `python -m agent_memory_benchmark --help` lists all six subcommands.
