@@ -1,0 +1,138 @@
+"""Tests for ``cli/run_cmd.py`` arg parsing + value coercion.
+
+The full ``run_command`` integration path goes through network-ish code
+(``build_provider``) so these tests focus on the pieces we can verify
+without running the orchestrator: arg shape, memory-config parsing, and
+error handling when the command can't assemble.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from agent_memory_benchmark.cli.main import build_parser
+from agent_memory_benchmark.cli.run_cmd import _parse_memory_config, add_run_subparser
+
+
+def test_parse_memory_config_parses_json_and_strings() -> None:
+    cfg = _parse_memory_config(
+        [
+            "timeout=30",
+            "model=llama3.1:8b",
+            "flag=true",
+            'json_obj={"k": 1}',
+        ]
+    )
+    assert cfg["timeout"] == 30
+    assert cfg["model"] == "llama3.1:8b"
+    assert cfg["flag"] is True
+    assert cfg["json_obj"] == {"k": 1}
+
+
+def test_parse_memory_config_rejects_missing_equals() -> None:
+    with pytest.raises(ValueError, match="must be KEY=VALUE"):
+        _parse_memory_config(["bare_token"])
+
+
+def test_parse_memory_config_rejects_empty_key() -> None:
+    with pytest.raises(ValueError, match="empty key"):
+        _parse_memory_config(["=value"])
+
+
+def test_parser_rejects_missing_required_args() -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run", "longmemeval"])
+
+
+def test_parser_accepts_full_longmemeval_invocation() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "full-context",
+            "--answer-model",
+            "ollama:llama3.1:8b",
+            "--judge-model",
+            "ollama:llama3.1:70b",
+            "--split",
+            "s",
+            "--limit",
+            "5",
+        ]
+    )
+    assert args.command == "run"
+    assert args.dataset == "longmemeval"
+    assert args.memory == "full-context"
+    assert args.answer_model == "ollama:llama3.1:8b"
+    assert args.judge_model == "ollama:llama3.1:70b"
+    assert args.split == "s"
+    assert args.limit == 5
+    assert args.resume is True
+    assert args.no_cache is False
+    assert args.limit_strategy == "stratified"
+
+
+def test_parser_no_resume_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "full-context",
+            "--answer-model",
+            "ollama:x",
+            "--judge-model",
+            "ollama:y",
+            "--no-resume",
+        ]
+    )
+    assert args.resume is False
+
+
+def test_parser_adapters_and_out_paths_are_paths() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "full-context",
+            "--answer-model",
+            "ollama:x",
+            "--judge-model",
+            "ollama:y",
+            "--out",
+            "./my/results",
+            "--cache-root",
+            "./my/cache",
+        ]
+    )
+    assert isinstance(args.out, Path)
+    assert isinstance(args.cache_root, Path)
+
+
+def test_add_run_subparser_exposes_dataset_choices() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    add_run_subparser(subparsers)
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "run",
+                "unknown-bench",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "x",
+                "--judge-model",
+                "y",
+            ]
+        )

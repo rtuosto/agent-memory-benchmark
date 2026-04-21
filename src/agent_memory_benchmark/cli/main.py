@@ -1,4 +1,4 @@
-"""CLI entrypoint. Subcommands are wired in subsequent PRs."""
+"""CLI entrypoint. Additional subcommands land in subsequent PRs."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 
 from ..version import __version__
+from .run_cmd import add_run_subparser, run_command
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,11 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"%(prog)s {__version__}",
     )
-    # Subcommands are added in subsequent PRs (run, baseline, rejudge, compare,
-    # summarize, cache). The parser is intentionally minimal here so that
-    # ``amb --version`` works immediately after the scaffold lands.
     subparsers = parser.add_subparsers(dest="command", metavar="<command>")
     subparsers.required = False
+    # ``run`` wires in at PR-7; baseline / rejudge / compare / summarize / cache
+    # follow in PR-8.
+    add_run_subparser(subparsers)
     return parser
 
 
@@ -33,7 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help(sys.stderr)
         return 0
-    # Dispatch will land in PR-8 once the subcommands exist.
+    if args.command == "run":
+        return run_command(args, argv=list(argv) if argv is not None else None)
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover — parser.error exits
 
