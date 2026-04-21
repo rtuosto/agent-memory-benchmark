@@ -1,10 +1,16 @@
 """``EngramAdapter`` — wraps :class:`engram.EngramGraphMemorySystem`.
 
-Engram is a memory *tool* that exposes ``ingest(memory)`` and
-``recall(query)``. It does not answer questions — answering is the
-outside agent's job. This adapter is the answerer:
+Engram is a memory *tool* that exposes ``ingest(memory)`` /
+``ingest_many(memories)`` and ``recall(query)``. It does not answer
+questions — answering is the outside agent's job. This adapter is the
+answerer:
 
-1. ``ingest_session`` — one :class:`engram.Memory` per :class:`Turn`.
+1. ``ingest_session`` — build one :class:`engram.Memory` per :class:`Turn`
+   and hand the whole session to ``engram.ingest_many``. The graph-backed
+   implementation pools spaCy / mpnet / MiniLM forwards across the batch
+   dimension (~2.6× faster on synthetic corpora), while preserving the
+   ``R16`` append-only ordering and per-memory structural fingerprint of
+   a sequential loop.
 2. ``answer_question`` — call ``engram.recall(question)``, format the
    :class:`engram.RecallResult` as context, then hand the prompt to the
    user-supplied :class:`LLMProvider` for generation.
@@ -78,6 +84,7 @@ class EngramAdapter(MemoryAdapter):
         from engram import Memory
 
         session_ts = _normalize_timestamp(session.session_time)
+        memories: list[Memory] = []
         for turn in session.turns:
             metadata: list[tuple[str, str]] = [
                 ("case_id", case_id),
@@ -89,14 +96,16 @@ class EngramAdapter(MemoryAdapter):
             if turn.image_caption:
                 metadata.append(("image_caption", turn.image_caption))
             turn_ts = _normalize_timestamp(turn.timestamp) or session_ts
-            memory = Memory(
-                content=turn.text,
-                timestamp=turn_ts,
-                speaker=turn.speaker,
-                source="conversation_turn",
-                metadata=tuple(sorted(metadata)),
+            memories.append(
+                Memory(
+                    content=turn.text,
+                    timestamp=turn_ts,
+                    speaker=turn.speaker,
+                    source="conversation_turn",
+                    metadata=tuple(sorted(metadata)),
+                )
             )
-            await self._target.ingest(memory)
+        await self._target.ingest_many(memories)
 
     async def answer_question(self, question: str, case_id: str) -> AnswerResult:
         t0 = time.perf_counter()
