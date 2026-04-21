@@ -5,6 +5,101 @@
 
 ---
 
+## Session: 2026-04-20 — PR-11 BEAM loader + ability-routed judge
+
+### What Was Done
+
+**PR-11 (on `feat/beam`, branched from `main` after PR-10 merged):** third dataset lands, closing the three-benchmark loop. Both `amb run beam` and `amb rejudge` on BEAM runs now work end-to-end; the existing adapter layer (full-context / python / http) requires zero changes.
+
+**Loader design was driven by a live HF round-trip.** A first-pass speculative loader (schema-tolerant, guessed ability names) was replaced mid-PR after the smoke test surfaced the real `Mohammadta/BEAM` schema: conversation-per-row, not question-per-row; underscored ability names; `probing_questions` as a Python-repr string keyed by the ten real abilities. The final loader is pinned against the observed schema rather than defensively tolerant.
+
+- `datasets/beam.py` — `BeamDataset` + `load_beam()`. Pulls from HF `Mohammadta/BEAM` (128K-1M tier, ~90 rows live) or `Mohammadta/BEAM-10M` via `--variant`. Splits are **context-length tiers** (`100K`/`500K`/`1M`), not train/val/test; default picks the hardest tier per variant so full-context baselines stretch the instrument. `CANONICAL_ABILITIES` pins the ten real abilities observed on HF (`abstention`, `contradiction-resolution`, `event-ordering`, `information-extraction`, `instruction-following`, `knowledge-update`, `multi-session-reasoning`, `preference-following`, `summarization`, `temporal-reasoning`). Loader normalizes BEAM's underscored HF form (`temporal_reasoning`) to the hyphenated benchmark form at the boundary so scorecard bucketing matches LongMemEval conventions. `--abilities` filter accepts either form. `descriptor_hash = sha256(name, variant, revision, split, abilities_sig, limit_sig)`. Row → case: `chat` (list of session-lists, each turn carrying globally-unique `id` ints + `time_anchor` on first turn) flattens into `Session`s; `probing_questions` parses via `json.loads` → `ast.literal_eval` fallback and explodes into N `QAItem`s (one per question per ability; typically 20 = 2×10). `source_chat_ids` (list of ints, or dict for `knowledge_update`'s `original_info`/`updated_info` split) stringifies to `evidence_turn_ids`. Gold answer picks from `answer` / `ideal_response` / `ideal_summary` in priority order. Unknown ability keys in the HF bundle are silently skipped so a future BEAM release adding an eleventh ability doesn't hard-error the loader.
+- `judge/beam.py` — four byte-frozen templates (`general`, `temporal`, `event-ordering`, `abstention`) with `BEAM_JUDGE_FINGERPRINT = 671c56e0…634c70a4`. Ability routing: `temporal-reasoning→temporal`, `event-ordering→event-ordering`, `abstention→abstention`, rest→`general`. This "start generic, specialize when suspect" posture is intentional and documented in `docs/beam.md` — adding a specialized template is a P8 event (bumped `protocol_version`, new fingerprint golden).
+- `judge/__init__.py` — re-exports BEAM symbols alongside LME + LOCOMO.
+- `runner/judge_adapter.py` — new `BeamJudge` class (single-run yes/no like `LongMemEvalJudge`). `prompt_fingerprint(qa)` routes by `qa.question_type`, matching what `judge()` will write, so the orchestrator's benchmark-agnostic cache-lookup path keeps working.
+- `runner/__init__.py` — `run_benchmark()` gains `beam_variant` / `beam_revision` / `beam_abilities` kwargs. `_load_dataset` dispatches to `load_beam(...)` for `dataset_name == "beam"`. `build_benchmark_judge` routes `"beam"` → `BeamJudge`; dispatch now raises `ValueError("Unknown dataset_name")` on the residual unknown branch (no more "PR-11 pending" placeholder). `_extract_hf_revision` already pulled via `getattr(dataset, "revision", None)` — BeamDataset exposes `revision` as a property so the manifest gets it automatically.
+- `datasets/__init__.py` — re-exports `BeamDataset`, `load_beam`, `BEAM_CANONICAL_ABILITIES`, `BEAM_VALID_VARIANTS`, `BEAM_HF_DATASET_ID`, `BEAM_HF_DATASET_ID_10M`, `BEAM_HF_REVISION`. `load_dataset("beam", ...)` no longer raises `DatasetUnavailableError`.
+- `cli/run_cmd.py` — three new flags on the shared arg surface: `--variant {beam,beam-10m}` (default `beam`), `--beam-revision <sha>` (placeholder pin escape hatch), and `--abilities a,b,c` (repeating filter via comma-split in `_parse_abilities`). `run_command` threads them through `run_benchmark`. `--split` is re-used for BEAM (`100K`/`500K`/`1M`) — no new flag needed. Baseline inherits all three via `_add_shared_run_arguments(parser, include_memory=False)` so `amb baseline beam ...` works too.
+- `openapi.yaml` — untouched (BEAM uses the existing adapter layer).
+- `docs/beam.md` (new) — narrative reference: variant/split/ability table, ability→template routing with fingerprints, schema-tolerance behavior, revision pinning, invocation examples, scorecard shape.
+- `README.md` — adds a BEAM quickstart block and points at `docs/beam.md`.
+- `docs/ARCHITECTURE.md` — three new rows in the decisions table: (a) BEAM splits are context-length tiers, (b) seven of ten abilities route to `general` by design, (c) loader is schema-tolerant.
+
+**Tests (111 new; 569 passed + 1 skipped):**
+- `test_beam_loader.py` (new) — real-schema coverage: `_parse_chat` flattens session-lists + preserves globally-unique `id` turn IDs + `time_anchor` on first turn; `_parse_probing_questions` handles Python-repr, strict JSON, already-parsed dict, unparseable-garbage, and empty inputs; ability filter, unknown-ability skip (future-release-safe), empty-question drop, one-QAItem-per-question-per-ability; gold priority (`answer` > `ideal_response` > `ideal_summary`); evidence flattening for list-of-ints and `knowledge_update`'s dict-of-lists; `_row_to_case` end-to-end (sessions + QA count, turn-ID uniqueness, ability normalization to hyphenated form, metadata carries `ability`/`difficulty`, `case_id` fallback); `BeamDataset.__init__` guards (variant, abilities validation + underscore normalization, negative limit, empty abilities = no filter, row-limit truncation, stable iteration order, abilities filter propagation); descriptor hash stability + drift across variant / revision / split / abilities / limit; `load_beam` split validation + default-to-largest-tier + abilities/limit forwarding; `load_dataset("beam", …)` dispatch; `CANONICAL_ABILITIES` pin-check against the observed HF taxonomy.
+- `test_judge_beam.py` (new) — template routing for all ten canonical abilities + three unknown fallbacks, case-insensitive ability handling, prompt-content smoke (substrings unique to each template), yes/no parser including `yesterday`-not-yes word-boundary discipline, fingerprint-bytes cross-check.
+- `test_judge_prompts_stable.py` — adds BEAM goldens for each of the four templates, combined bundle golden, catalog exactly four, yes/no trailer check, three-placeholder check, BEAM vs LME vs LOCOMO bundle-divergence check, four-template byte-distinctness.
+- `test_runner_judge_adapter.py` — `BeamJudge` fingerprint selection per ability (temporal, abstention, event-ordering, unknown→general), single-run enforcement, `prompt_fingerprint` matches `judge()` write.
+- `test_cli_run_cmd.py` — `_parse_abilities` matrix (None, empty, whitespace, comma-separated, empty-entries dropped), parser accepts `--variant` / `--abilities` / `--beam-revision`, rejects bad variant, default variant is `beam`.
+- `test_locomo_loader.py` / `test_longmemeval_loader.py` — swapped the "BEAM raises DatasetUnavailableError" tests for positive dispatch checks (monkeypatch `_load_hf` to avoid network).
+- `test_cli_rejudge_cmd.py` — the `test_build_benchmark_judge_rejects_unsupported` now uses `"squad"` (unknown dataset) instead of `"beam"`; new `test_build_benchmark_judge_routes_beam` asserts `BeamJudge` is built.
+
+**Invocation (the payoff):**
+
+```bash
+# Smoke against 1M-token tier.
+amb run beam \
+    --memory full-context \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --limit 5
+
+# Two-ability subset, pinned revision.
+amb run beam \
+    --memory python:mypkg.mem:MyMem \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model openai:gpt-4o-mini-2024-07-18 \
+    --variant beam --split 500K \
+    --abilities temporal-reasoning,abstention \
+    --beam-revision <sha> \
+    --limit 40
+```
+
+### Current State
+
+- Branch: `feat/beam`. HEAD commit pending (see below — commit after this write).
+- Tests: 569 passed (up from 458), 1 skipped (POSIX-only symlink).
+- Lint: `ruff check src tests` → clean.
+- Format: `ruff format` was run on the three new files (`datasets/beam.py`, `test_beam_loader.py`, `test_judge_beam.py`). Pre-existing format drift from PR-9 (`cli/compare_cmd.py`, `test_cli_compare_cmd.py`, `test_cli_main_dispatch.py`, `test_cli_summarize_cmd.py`, `test_llm_ollama.py`) was left alone to keep the diff tight — same call as PR-9/PR-10 handoffs.
+- Types: `mypy src` → clean on 46 source files.
+
+### What's Next
+
+- Merge `feat/beam` to `main` with `--no-ff` following the established pattern.
+- **PR-12** — noise-aware replicates (K1/K6) + `--publishable` gate + `docs/methodology.md`. Cache key already includes `replicate_idx`; scorecard already sprouts `replicates.{mean, std}` when multi-replicate. Need: driver loop in `runner/replicates.py`, `--replicates N` flag, seed plumbing, `--publishable` hard-errors on stale cache / dirty git / fingerprint drift.
+- **PR-13** — integration tests with recorded HTTP fixtures for all three benchmarks × all three adapters. `respx` + cassette-style fixtures.
+- **Follow-up** — pin a canonical `HF_REVISION` for BEAM in `datasets/beam.py` (currently `"main"` as a visible placeholder) once a publishable BEAM run lands. The descriptor hash includes the revision string verbatim, so the pin bump invalidates prior caches as intended.
+
+### Open Questions
+
+- **BEAM schema confirmation.** `datasets/beam.py::_row_to_case` was designed schema-tolerant because the HF row layout on `Mohammadta/BEAM` isn't locked in this repo yet. When the first live BEAM run fires, eyeball `row.keys()` against the loader's assumptions — if the ability field, evidence field, or conversation shape differs, the first fix is `_row_to_case`, not `BenchmarkCase`. The live fetch in `test_longmemeval_loader` / `test_locomo_loader` monkeypatches `_load_hf`, so CI doesn't guarantee live-HF correctness.
+- **Ability-specific templates beyond the current four.** Seven of ten abilities route to `general` right now. If `persona-consistency` or `selective-recall` accuracy is suspect in practice, adding a specialized template is the right move — but treat it as a P8 event: bump `protocol_version`, add the new fingerprint golden in `test_judge_prompts_stable.py`, and document the migration.
+- **BEAM `ability` metadata vs. `evidence_turn_ids`.** The paper references per-QA evidence turns, but whether the HF schema actually populates them is still unconfirmed. The loader accepts both `row["evidence_turn_ids"]` and `row["evidence"]` and stores an empty tuple when neither is present — in that case the evidence KPIs report `null` for that question (matches LongMemEval-no-evidence behavior).
+- **`amb rejudge` on BEAM.** Fully wired (dispatcher routes `beam` → `BeamJudge` via `build_benchmark_judge`), but there's no dedicated test covering the rejudge happy-path for BEAM specifically. LOCOMO-style coverage would be a one-screen follow-up.
+
+### Gotchas
+
+- **`HF_REVISION = "main"` is a placeholder.** `datasets/beam.py` defaults to `"main"` and the CLI's `--beam-revision` is the override knob. A publishable BEAM run MUST pass `--beam-revision <sha>` explicitly until a canonical pin lands in the module. The descriptor hash includes the revision verbatim, so `main` caches are stable but non-comparable across commits of the dataset.
+- **BEAM splits are context tiers, not train/val/test.** `--split train` hard-errors with "only supports splits ['100K', '500K', '1M']". The default-to-largest-tier behavior lives in `BeamDataset.load`'s `_DEFAULT_SPLIT` map.
+- **`--abilities` takes a comma-separated list.** The CLI stays single-flag for repeat-avoidance — `--abilities abstention,temporal-reasoning`, NOT `--abilities abstention --abilities temporal-reasoning`. Unknown names hard-error at load (typos fail fast instead of burning a judge-model bill).
+- **Seven of ten abilities currently route to `general`.** `docs/beam.md` enumerates the routing table and fingerprints. If a new ability surfaces in a future BEAM release that isn't in `CANONICAL_ABILITIES`, it falls through to `general` silently — the load-time validation only catches typos of *known* abilities, not new ones added upstream.
+- **`_load_hf` uses lazy `datasets` import.** Mirroring `longmemeval.py` so modules stay importable where the HF stack isn't available (Windows App Control, CI without network). Tests `monkeypatch` `_load_hf` rather than the `datasets` package.
+- **BEAM rows are one-CONVERSATION-per-row** (corrected mid-PR via live smoke). Each row becomes one `BenchmarkCase` with typically 20 `QAItem`s (2 per ability × 10 abilities), matching LOCOMO's shape more than LongMemEval's. `case_id = conversation_id`; turn IDs are the globally-unique `id` ints stringified so `source_chat_ids` maps 1:1 onto `evidence_turn_ids`.
+- **Ability names normalize underscore→hyphen at the loader boundary.** The HF rows use `temporal_reasoning`, but the benchmark's `question_type` and scorecard keys use `temporal-reasoning`. `_ability_from_raw()` does the conversion; `--abilities` accepts either form. If you're reading `QAItem.question_type` downstream, expect hyphens.
+- **`probing_questions` on HF is a Python-repr string, not strict JSON.** The loader tries `json.loads` first and falls back to `ast.literal_eval`. An HF release that started emitting valid JSON would still work; a release that emits something neither parser handles silently drops the row's questions (sessions remain available for ingestion).
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main
+# Start PR-12: noise-aware replicates + --publishable gate.
+git checkout -b feat/replicates
+```
+
+---
+
 ## Session: 2026-04-20 — PR-10 HTTP adapter + openapi.yaml + docs/http-api.md
 
 ### What Was Done

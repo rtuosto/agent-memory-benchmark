@@ -9,9 +9,9 @@ template automatically invalidates its cached verdicts.
 Why a Protocol here instead of inline branching in the orchestrator: each
 benchmark has its own template-selection + output-parsing logic
 (LongMemEval routes five templates by task + abstention, LOCOMO runs one
-template N times for majority vote, BEAM in PR-11 will specialize per
-ability). Isolating that behind this interface keeps the orchestrator
-benchmark-agnostic.
+template N times for majority vote, BEAM specializes per ability across
+the ten-way taxonomy). Isolating that behind this interface keeps the
+orchestrator benchmark-agnostic.
 
 The :meth:`BenchmarkJudge.prompt_fingerprint` method lets the orchestrator
 look up cached verdicts without knowing what template the judge will use
@@ -25,6 +25,14 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..judge.beam import (
+    BEAM_PROMPT_FINGERPRINTS,
+    beam_anscheck_prompt,
+    template_key_for_ability,
+)
+from ..judge.beam import (
+    parse_yes_no as beam_parse_yes_no,
+)
 from ..judge.locomo import (
     LOCOMO_PROMPT_FINGERPRINTS,
     locomo_judge_prompt,
@@ -193,6 +201,65 @@ class LocomoJudge:
         )
 
 
+class BeamJudge:
+    """Judge wrapper for BEAM's ability-routed yes/no protocol.
+
+    BEAM's ten-ability taxonomy maps onto four templates: ``general``
+    (default), ``temporal`` (off-by-one tolerance),
+    ``event-ordering`` (strict sequence match), and ``abstention``
+    (credit only for explicit refusal). Routing uses
+    :func:`~..judge.beam.template_key_for_ability` on
+    ``qa.question_type`` — abilities outside the canonical ten fall
+    through to ``general``, so a dataset with a renamed ability still
+    produces a verdict instead of hard-erroring.
+
+    Single-run yes/no like :class:`LongMemEvalJudge`; multi-run
+    majority-vote is a LOCOMO-specific construct and guarded out here.
+    """
+
+    benchmark_name = "beam"
+
+    def __init__(
+        self,
+        client: JudgeClient,
+        *,
+        runs: int = 1,
+        temperature: float = 0.0,
+        bundle_fingerprint: str,
+    ) -> None:
+        if runs != 1:
+            raise ValueError(
+                f"BeamJudge supports --judge-runs 1; got {runs}. "
+                "Use the LOCOMO judge for multi-run majority voting."
+            )
+        self._client = client
+        self._runs = runs
+        self._temperature = temperature
+        self._bundle_fingerprint = bundle_fingerprint
+
+    @property
+    def bundle_fingerprint(self) -> str:
+        return self._bundle_fingerprint
+
+    def prompt_fingerprint(self, qa: QAItem) -> str:
+        key = template_key_for_ability(qa.question_type)
+        return BEAM_PROMPT_FINGERPRINTS[key]
+
+    async def judge(self, qa: QAItem, generated: str) -> JudgeOutcome:
+        key = template_key_for_ability(qa.question_type)
+        fp = BEAM_PROMPT_FINGERPRINTS[key]
+        prompt = beam_anscheck_prompt(qa.question_type, qa.question, qa.gold, generated)
+        t0 = time.perf_counter()
+        raw = await self._client.complete(prompt, temperature=self._temperature)
+        judge_ms = (time.perf_counter() - t0) * 1000.0
+        correct = beam_parse_yes_no(raw)
+        return JudgeOutcome(
+            verdicts=[{"correct": correct, "raw": raw}],
+            prompt_fingerprint=fp,
+            judge_time_ms=judge_ms,
+        )
+
+
 def _template_key_for(task: str, *, abstention: bool) -> str:
     if abstention:
         return "abstention"
@@ -210,6 +277,7 @@ def locomo_majority_correct(verdicts: list[dict[str, str | bool]]) -> bool:
 
 
 __all__ = [
+    "BeamJudge",
     "BenchmarkJudge",
     "JudgeOutcome",
     "LocomoJudge",

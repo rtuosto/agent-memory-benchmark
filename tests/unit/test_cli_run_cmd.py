@@ -14,6 +14,7 @@ import pytest
 
 from agent_memory_benchmark.cli.main import build_parser
 from agent_memory_benchmark.cli.run_cmd import (
+    _parse_abilities,
     _parse_memory_config,
     _parse_memory_headers,
     _resolve_num_ctx,
@@ -271,6 +272,127 @@ class TestNumCtxFlags:
             ]
         )
         assert args.num_ctx == 131072
+
+
+class TestAbilitiesParsing:
+    def test_none_returns_none(self) -> None:
+        assert _parse_abilities(None) is None
+
+    def test_empty_returns_none(self) -> None:
+        assert _parse_abilities("") is None
+        assert _parse_abilities("  ") is None
+        assert _parse_abilities(",,") is None
+
+    def test_single_ability_parses(self) -> None:
+        assert _parse_abilities("temporal-reasoning") == ["temporal-reasoning"]
+
+    def test_comma_separated_parses(self) -> None:
+        assert _parse_abilities("abstention,temporal-reasoning") == [
+            "abstention",
+            "temporal-reasoning",
+        ]
+
+    def test_whitespace_is_stripped(self) -> None:
+        assert _parse_abilities(" abstention , temporal-reasoning ") == [
+            "abstention",
+            "temporal-reasoning",
+        ]
+
+    def test_empty_entries_are_dropped(self) -> None:
+        assert _parse_abilities("abstention,,temporal-reasoning") == [
+            "abstention",
+            "temporal-reasoning",
+        ]
+
+
+class TestBeamCliFlags:
+    def test_parser_accepts_variant(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "beam",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+                "--variant",
+                "beam-10m",
+            ]
+        )
+        assert args.variant == "beam-10m"
+
+    def test_parser_default_variant_is_beam(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "beam",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+            ]
+        )
+        assert args.variant == "beam"
+
+    def test_parser_accepts_abilities(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "beam",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+                "--abilities",
+                "abstention,temporal-reasoning",
+            ]
+        )
+        assert args.abilities == "abstention,temporal-reasoning"
+
+    def test_parser_accepts_beam_revision(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "beam",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+                "--beam-revision",
+                "abc123",
+            ]
+        )
+        assert args.beam_revision == "abc123"
+
+    def test_parser_rejects_invalid_variant(self) -> None:
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                [
+                    "run",
+                    "beam",
+                    "--memory",
+                    "full-context",
+                    "--answer-model",
+                    "ollama:x",
+                    "--judge-model",
+                    "ollama:y",
+                    "--variant",
+                    "squad",
+                ]
+            )
 
 
 def test_parser_mapper_flags_default_to_none() -> None:

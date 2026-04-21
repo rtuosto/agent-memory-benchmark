@@ -39,9 +39,17 @@ amb run longmemeval \
     --answer-model ollama:llama3.1:8b \
     --judge-model ollama:llama3.1:70b \
     --split s --limit 5
+
+# BEAM (Beyond a Million Tokens) — ten-ability routing, 128K-1M token contexts.
+amb run beam \
+    --memory full-context \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --variant beam --abilities temporal-reasoning,abstention \
+    --limit 20
 ```
 
-`amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`). BEAM lands in PR-11.
+`amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`). BEAM variant / split / ability filter semantics are documented in [`docs/beam.md`](docs/beam.md).
 
 Service authors who want to be benchmarkable over the network implement the
 four required endpoints documented in [`docs/http-api.md`](docs/http-api.md)

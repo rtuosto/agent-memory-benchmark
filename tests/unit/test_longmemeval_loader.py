@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from agent_memory_benchmark.datasets import DatasetUnavailableError, load_dataset
+from agent_memory_benchmark.datasets import load_dataset
 from agent_memory_benchmark.datasets.longmemeval import (
     HF_DATASET_ID,
     HF_REVISION,
@@ -297,9 +297,14 @@ def test_load_dataset_locomo_requires_path() -> None:
         load_dataset("locomo")
 
 
-def test_load_dataset_beam_is_reserved_for_pr11() -> None:
-    with pytest.raises(DatasetUnavailableError, match="PR-11"):
-        load_dataset("beam")
+def test_load_dataset_beam_is_wired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BEAM now dispatches to :func:`load_beam`. Live HF fetch is stubbed."""
+
+    import agent_memory_benchmark.datasets.beam as beam_mod
+
+    monkeypatch.setattr(beam_mod, "_load_hf", lambda **kw: [])
+    ds = load_dataset("beam", variant="beam", revision="dummy")
+    assert ds.name == "beam"
 
 
 def test_load_dataset_unknown_name_errors() -> None:

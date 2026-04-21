@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 
 from agent_memory_benchmark.datasets import (
-    DatasetUnavailableError,
     LocomoDataset,
     load_dataset,
 )
@@ -318,6 +317,15 @@ def test_load_dataset_locomo_rejects_bad_path_type() -> None:
         load_dataset("locomo", path=42)  # type: ignore[arg-type]
 
 
-def test_beam_is_still_unavailable() -> None:
-    with pytest.raises(DatasetUnavailableError, match="PR-11"):
-        load_dataset("beam")
+def test_load_dataset_beam_routes_to_beam_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``load_dataset('beam')`` wires through to :func:`load_beam`.
+
+    We stub ``_load_hf`` so the test doesn't hit HuggingFace; the goal
+    is to lock the dispatcher wiring, not the live fetch."""
+
+    import agent_memory_benchmark.datasets.beam as beam_mod
+
+    monkeypatch.setattr(beam_mod, "_load_hf", lambda **kw: [])
+    ds = load_dataset("beam", variant="beam", revision="dummy")
+    assert isinstance(ds, beam_mod.BeamDataset)
+    assert len(ds) == 0
