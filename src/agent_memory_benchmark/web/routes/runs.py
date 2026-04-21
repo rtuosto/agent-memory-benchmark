@@ -14,13 +14,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
+from ...results.compare import compare_scorecards
 from ..charts import build_chart_data
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
+
+    from ..index import ResultIndex, RunDetail, RunSummary
 
 
 def build_router(templates: Jinja2Templates) -> APIRouter:
@@ -43,11 +46,34 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}")
-    def run_detail(run_id: str, request: Request):  # type: ignore[no-untyped-def]
+    def run_detail(  # type: ignore[no-untyped-def]
+        run_id: str,
+        request: Request,
+        baseline: str | None = Query(
+            default=None,
+            description="Run ID to compare against. 'none' disables; unset = best.",
+        ),
+    ):
         index = request.app.state.result_index
         detail = index.get_run(run_id)
         if detail is None:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+
+        baseline_summary, baseline_detail, baseline_mode = _resolve_baseline(
+            index, detail, baseline
+        )
+        candidates = index.list_candidates(
+            benchmark=detail.summary.benchmark, exclude_run_id=run_id
+        )
+        compare_table = None
+        if baseline_detail is not None:
+            compare_table = compare_scorecards(
+                baseline_detail.scorecard,
+                detail.scorecard,
+                a_label=baseline_detail.summary.run_id,
+                b_label=detail.summary.run_id,
+            )
+
         import json as _json
 
         return templates.TemplateResponse(
@@ -59,6 +85,10 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 "meta": detail.meta,
                 "scorecard_md": detail.scorecard_md,
                 "chart_data_json": _json.dumps(build_chart_data(detail.scorecard)),
+                "baseline_summary": baseline_summary,
+                "baseline_mode": baseline_mode,  # "auto" | "manual" | "none"
+                "candidates": candidates,
+                "compare": compare_table,
             },
         )
 
@@ -73,6 +103,37 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         return FileResponse(path, media_type="application/json")
 
     return router
+
+
+def _resolve_baseline(
+    index: "ResultIndex",
+    detail: "RunDetail",
+    requested: str | None,
+) -> tuple["RunSummary | None", "RunDetail | None", str]:
+    """Pick the baseline run to compare against, honoring the query param.
+
+    Returns ``(summary, detail, mode)``:
+
+    - ``mode == "none"`` if the user explicitly opted out via ``baseline=none``.
+    - ``mode == "manual"`` if a specific ``run_id`` was requested and found.
+    - ``mode == "auto"`` if we fell back to the best-known baseline (or
+      there was nothing to compare against; then ``summary`` is also ``None``).
+    """
+
+    if requested == "none":
+        return None, None, "none"
+    if requested:
+        candidate = index.get_run(requested)
+        if candidate is not None and candidate.summary.benchmark == detail.summary.benchmark:
+            return candidate.summary, candidate, "manual"
+        # Fall through to auto if the requested run is missing / wrong benchmark.
+    best = index.best_baseline(
+        benchmark=detail.summary.benchmark, exclude_run_id=detail.summary.run_id
+    )
+    if best is None:
+        return None, None, "auto"
+    best_detail = index.get_run(best.run_id)
+    return best, best_detail, "auto"
 
 
 def _safe_file(results_dir: Path, run_id: str, filename: str) -> Path:

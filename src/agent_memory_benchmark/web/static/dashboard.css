@@ -165,6 +165,64 @@ table tbody tr:last-child td { border-bottom: none; }
     white-space: pre-wrap;
 }
 
+.baseline-picker {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.baseline-picker label { color: var(--muted); }
+
+.baseline-picker select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.35rem 0.5rem;
+    font: inherit;
+    min-width: 18rem;
+    max-width: 100%;
+}
+
+.baseline-picker select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.baseline-summary {
+    color: var(--muted);
+    font-size: 0.9em;
+}
+
+.baseline-summary a { color: var(--accent); text-decoration: none; }
+.baseline-summary a:hover { text-decoration: underline; }
+
+.delta {
+    display: inline-block;
+    margin-top: 0.35rem;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.delta.up { color: var(--good); }
+.delta.down { color: var(--bad); }
+
+.warn {
+    color: var(--warn, #fbbf24);
+    background: rgba(251, 191, 36, 0.1);
+    border-left: 3px solid #fbbf24;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 1rem 0;
+}
+
 .actions {
     margin-top: 2rem;
     display: flex;

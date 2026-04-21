@@ -93,6 +93,50 @@ class ResultIndex:
         summaries.sort(key=lambda s: s.run_id, reverse=True)
         return summaries
 
+    def best_baseline(
+        self,
+        *,
+        benchmark: str | None,
+        exclude_run_id: str | None = None,
+    ) -> RunSummary | None:
+        """Return the same-benchmark run with the highest ``overall_accuracy``.
+
+        Self-exclusion lets callers drop the currently-viewed run without
+        extra filtering downstream. Returns ``None`` when no other
+        complete run exists for ``benchmark``; the detail view then just
+        skips rendering the baseline comparison.
+        """
+
+        if benchmark is None:
+            return None
+        best: RunSummary | None = None
+        for summary in self.list_runs():
+            if summary.run_id == exclude_run_id:
+                continue
+            if summary.benchmark != benchmark:
+                continue
+            if summary.overall_accuracy is None:
+                continue
+            if best is None or summary.overall_accuracy > (best.overall_accuracy or 0):
+                best = summary
+        return best
+
+    def list_candidates(
+        self,
+        *,
+        benchmark: str | None,
+        exclude_run_id: str | None = None,
+    ) -> list[RunSummary]:
+        """Runs a user can pick as a baseline — same-benchmark, not self."""
+
+        if benchmark is None:
+            return []
+        return [
+            summary
+            for summary in self.list_runs()
+            if summary.benchmark == benchmark and summary.run_id != exclude_run_id
+        ]
+
     def get_run(self, run_id: str) -> RunDetail | None:
         """Return the full detail for ``run_id`` or ``None`` if unknown."""
 

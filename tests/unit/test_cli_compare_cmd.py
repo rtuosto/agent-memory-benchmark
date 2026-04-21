@@ -1,4 +1,9 @@
-"""Tests for ``cli/compare_cmd.py`` — side-by-side scorecard diff."""
+"""Tests for ``cli/compare_cmd.py`` — side-by-side scorecard diff.
+
+Low-level diff logic lives in :mod:`agent_memory_benchmark.results.compare`
+and has its own suite; here we lock the CLI text shape and the command
+entrypoint (exit codes, stderr messages, happy path output).
+"""
 
 from __future__ import annotations
 
@@ -6,13 +11,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from agent_memory_benchmark.cli.compare_cmd import (
-    _delta,
     _fmt_float_delta,
     _fmt_pct_delta,
-    _render_compare,
     compare_command,
+    render_compare_text,
 )
+from agent_memory_benchmark.results.compare import compare_scorecards
 
 
 def _make_scorecard(
@@ -25,6 +32,11 @@ def _make_scorecard(
     throughput_qps: float | None = 0.5,
 ) -> dict[str, Any]:
     per_cat = per_category or {}
+    dist = (
+        {"mean": retrieval_mean, "p50": retrieval_mean, "p95": retrieval_mean, "max": retrieval_mean, "n": 10}
+        if retrieval_mean is not None
+        else None
+    )
     return {
         "benchmark": benchmark,
         "n_questions": 10,
@@ -35,9 +47,7 @@ def _make_scorecard(
             "overall_token_f1": 0.5,
             "per_category": per_cat,
         },
-        "latency_ms": {
-            "retrieval_per_query": {"mean": retrieval_mean, "p50": retrieval_mean, "p95": retrieval_mean, "max": retrieval_mean, "n": 10} if retrieval_mean is not None else None,
-        },
+        "latency_ms": {"retrieval_per_query": dist},
         "retrieval_footprint": {
             "units_per_query": None,
             "tokens_per_query": None,
@@ -51,17 +61,7 @@ def _make_scorecard(
 
 
 class TestDeltaHelpers:
-    def test_delta_with_numbers(self) -> None:
-        import pytest as _pytest
-
-        assert _delta(0.5, 0.7) == _pytest.approx(0.2)
-
-    def test_delta_with_none_returns_none(self) -> None:
-        assert _delta(None, 0.7) is None
-        assert _delta(0.5, None) is None
-
     def test_fmt_pct_delta_positive(self) -> None:
-        # 0.02 == 2pp in the output format
         assert _fmt_pct_delta(0.02) == "+2.00pp"
 
     def test_fmt_pct_delta_negative(self) -> None:
@@ -77,12 +77,12 @@ class TestDeltaHelpers:
         assert _fmt_float_delta(-0.5) == "-0.500"
 
 
-class TestRenderCompare:
+class TestRenderCompareText:
     def test_produces_quality_rows(self) -> None:
         a = _make_scorecard(overall_accuracy=0.5)
         b = _make_scorecard(overall_accuracy=0.6)
-        lines = _render_compare(a, b, a_label="A.json", b_label="B.json")
-        text = "\n".join(lines)
+        table = compare_scorecards(a, b, a_label="A.json", b_label="B.json")
+        text = "\n".join(render_compare_text(table))
         assert "## Quality" in text
         assert "overall_accuracy" in text
         assert "+10.00pp" in text
@@ -90,8 +90,9 @@ class TestRenderCompare:
     def test_flags_benchmark_mismatch(self) -> None:
         a = _make_scorecard(benchmark="longmemeval")
         b = _make_scorecard(benchmark="locomo")
-        lines = _render_compare(a, b, a_label="A", b_label="B")
-        assert any("benchmarks differ" in ln for ln in lines)
+        table = compare_scorecards(a, b, a_label="A", b_label="B")
+        text = "\n".join(render_compare_text(table))
+        assert "benchmarks differ" in text
 
     def test_per_category_union(self) -> None:
         a = _make_scorecard(
@@ -103,23 +104,24 @@ class TestRenderCompare:
                 "cat2": {"accuracy": 0.5, "token_f1": None, "count": 5},
             }
         )
-        lines = _render_compare(a, b, a_label="A", b_label="B")
+        table = compare_scorecards(a, b, a_label="A", b_label="B")
+        lines = render_compare_text(table)
         text = "\n".join(lines)
         assert "cat1" in text
-        assert "cat2" in text  # union shows on both sides
-        # cat2 missing on A side should render as —
+        assert "cat2" in text
         cat2_line = next(ln for ln in lines if "cat2" in ln)
-        assert "—" in cat2_line
+        assert "—" in cat2_line  # missing on A side renders as —
 
-    def test_evidence_section_shows_only_when_present(self) -> None:
+    def test_evidence_section_hidden_when_empty(self) -> None:
         a = _make_scorecard()
         b = _make_scorecard()
-        lines = _render_compare(a, b, a_label="A", b_label="B")
+        table = compare_scorecards(a, b, a_label="A", b_label="B")
+        lines = render_compare_text(table)
         assert not any("Evidence KPIs" in ln for ln in lines)
 
 
 class TestCompareCommand:
-    def test_missing_file_returns_1(self, tmp_path: Path, capsys: Any) -> None:
+    def test_missing_file_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         import argparse
 
         args = argparse.Namespace(
@@ -131,7 +133,7 @@ class TestCompareCommand:
         err = capsys.readouterr().err
         assert "does not exist" in err
 
-    def test_happy_path_returns_0(self, tmp_path: Path, capsys: Any) -> None:
+    def test_happy_path_returns_0(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         import argparse
 
         a_path = tmp_path / "a.json"
@@ -144,7 +146,7 @@ class TestCompareCommand:
         assert "# Compare" in out
         assert "overall_accuracy" in out
 
-    def test_corrupt_json_returns_1(self, tmp_path: Path, capsys: Any) -> None:
+    def test_corrupt_json_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         import argparse
 
         a_path = tmp_path / "bad.json"
