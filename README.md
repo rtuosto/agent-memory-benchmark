@@ -12,6 +12,29 @@ This benchmark is a **measurement instrument**. It calls into memory systems thr
 
 The benchmark enforces a **required `--judge-model` flag** (no default) so that any use of a paid-API judge is a conscious opt-in.
 
+## Quickstart
+
+```bash
+pip install -e ".[dev,openai,tiktoken]"
+
+# LongMemEval S split (HF-hosted, revision-pinned) via the null baseline.
+amb run longmemeval \
+    --memory full-context \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+
+# LOCOMO (local file; not redistributed) with 10-run majority-vote judging.
+amb run locomo \
+    --memory full-context \
+    --data ./locomo10.json \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --judge-runs 10 --limit 1
+```
+
+`amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`). BEAM lands in PR-11.
+
 ## Status
 
 Pre-release. See `docs/` for the architectural and methodological contract, and the [plan](https://github.com/rtuosto/agent-memory-benchmark) for the PR-by-PR bootstrap sequence.

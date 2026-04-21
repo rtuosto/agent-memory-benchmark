@@ -59,7 +59,7 @@ memory system.
 2. **Resolve adapter** — `resolve_adapter("python:pkg.mod:Class", memory_config=...)` constructs a `MemoryAdapter`.
 3. **Ingest** — for each case, each session is passed to `adapter.ingest_session(session, case_id)` in chronological order. Wall time is measured by the runner.
 4. **Answer** — for each QA, `adapter.answer_question(question, case_id)` returns an `AnswerResult`. Cache is consulted first; misses produce new answers.
-5. **Judge** — `JudgeClient.judge(benchmark, question, gold, generated, ...)` produces a pass/fail (LongMemEval, BEAM) or majority vote over N runs (LOCOMO). Cache is consulted first.
+5. **Judge** — a benchmark-specific `BenchmarkJudge` (implementing `prompt_fingerprint(qa)` + `judge(qa, generated)`) produces a pass/fail (LongMemEval, BEAM) or stores all N runs for majority vote (LOCOMO; strict majority via `locomo_majority_correct`). Cache is consulted first — the orchestrator keys off `judge.prompt_fingerprint(qa)` so it stays benchmark-agnostic.
 6. **Score** — `scorecard.build(records, dataset)` emits JSON, Markdown, and a rich-console render.
 
 ## Cache layout
@@ -104,6 +104,8 @@ results/latest       # symlink / Windows junction to most recent run
 | `--judge-model` has no default | Enforces conscious opt-in for paid-API judges | 2026-04-20 |
 | Whitespace + SQuAD-normalization as default evidence tokenizer | Reproducible, zero-dep, dataset-neutral; tiktoken available via opt-in | 2026-04-20 |
 | Runner-measured + adapter-reported timings both stored | Discrepancy is a telemetry-drift signal | 2026-04-20 |
+| `BenchmarkJudge.prompt_fingerprint(qa)` on the Protocol | Lets the orchestrator compute judge cache keys without knowing which template a benchmark will select; added when LOCOMO landed a second judge with different routing rules than LongMemEval | 2026-04-20 |
+| LOCOMO QA category 5 filtered at load, not at scoring | Keeps `len(dataset)` == scorable count; cache keys stay one-dimensional. Matches predecessor. | 2026-04-20 |
 
 ## External dependencies
 
