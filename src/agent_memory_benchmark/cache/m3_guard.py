@@ -57,14 +57,10 @@ def check_answer_cache_versions(
         try:
             payload = json.loads(entry_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            mismatches.append(
-                M3GuardMismatch(path=entry_path, found=None, unreadable=True)
-            )
+            mismatches.append(M3GuardMismatch(path=entry_path, found=None, unreadable=True))
             continue
         if not isinstance(payload, dict):
-            mismatches.append(
-                M3GuardMismatch(path=entry_path, found=None, unreadable=True)
-            )
+            mismatches.append(M3GuardMismatch(path=entry_path, found=None, unreadable=True))
             continue
         stored_id = payload.get("memory_system_id")
         if stored_id != memory_system_id:
