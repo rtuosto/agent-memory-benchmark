@@ -90,7 +90,7 @@ class MemoryAdapter(ABC):
         base_load = MemoryAdapter.load_state
         return type(self).save_state is not base_save or type(self).load_state is not base_load
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027  # intentional no-op default
         """Release any transport-level resources. Default: no-op."""
 
     async def __aenter__(self) -> MemoryAdapter:
