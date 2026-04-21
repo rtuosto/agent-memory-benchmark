@@ -112,6 +112,7 @@ results/latest       # symlink / Windows junction to most recent run
 | BEAM judge routes seven of ten abilities to a single `general` template | Specialized templates for `temporal-reasoning`, `event-ordering`, and `abstention` only — the rest fall through to `general`. Start with a generic grader; specialize when accuracy on a specific ability is suspect. Adding a template is a P8 event (bumped `protocol_version`, new fingerprint golden). | 2026-04-20 |
 | BEAM row = conversation (not question); exploded into N QAItems | `Mohammadta/BEAM` ships conversation-per-row: `chat` (3 session-lists) + `probing_questions` (JSON-bundle keyed by ability). The loader explodes one row into one `BenchmarkCase` with typically 20 `QAItem`s (2 per ability × 10 abilities). Turn IDs are the globally-unique `id` ints stringified so `source_chat_ids` evidence references work as-is. Ability names normalize underscore→hyphen at the boundary so the scorecard matches LongMemEval conventions. | 2026-04-20 |
 | Ingest latency is reported per *case*, not per session | `QARecord.ingestion_time_ms` carries the case's total ingest time (sum of every `ingest_session()` call within that case). The scorecard's `ingestion_per_case_ms` distribution samples one value per QA record, so n = number of questions, not number of ingest_session calls. The runner does not retain per-session timings separately. If an outlier session (e.g., a pathologically long haystack session) becomes diagnostically interesting, the orchestrator would need a parallel emit. Earlier (pre-2026-04-21) the field was named `ingestion_per_session_ms` / `ingestion_per_session` in JSON — the label was wrong. Renamed to avoid silently misreading cross-run comparisons. | 2026-04-21 |
+| `EngramAdapter.ingest_session` routes through `ingest_many`, not a per-turn `ingest` loop | Engram's `EngramGraphMemorySystem` overrides `ingest_many` to pool spaCy / mpnet / MiniLM forward passes across the batch dimension (~2.6× faster on 50-memory synthetic workloads). The batched path is structurally equivalent to the sequential loop — same node IDs, same edges, R16 append-only ordering preserved — so results are comparable across runs that used either entry point. Adapter builds the full list of `Memory` objects for a session then makes one call. | 2026-04-21 |
 
 ## External dependencies
 
@@ -145,7 +146,8 @@ Ollama must be running locally for integration tests that use it:
 
 | System | Status | Notes |
 |--------|--------|-------|
-| `memory.system.MultiLayerMemory` (engram) | Wrapper shim in PR-7.5 (`compat/engram_shim.py`) | `EngramShim` wrapper class; zero engram-side changes. Evidence KPIs work as long as engram returns retrieved chunks with `text` populated — the benchmark attributes them to evidence turns itself. |
+| `engram.EngramGraphMemorySystem` | Native adapter (`adapters/engram_adapter.py`) | `EngramAdapter` drives the rewritten engram repo directly — one `Memory` per `Turn`, batched via `ingest_many` per session, `recall` rendered into the answer-LLM prompt. Zero engram-side changes. |
+| `memory.system.MultiLayerMemory` (legacy engram) | Wrapper shim (`compat/engram_shim.py`) | `EngramShim` wrapper class for the pre-rewrite engram API. Evidence KPIs work as long as engram returns retrieved chunks with `text` populated — the benchmark attributes them to evidence turns itself. |
 
 ## Related
 

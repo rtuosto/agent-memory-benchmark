@@ -83,6 +83,7 @@ class _FakeEngram:
 
     def __init__(self, recall_result: _FakeRecallResult | None = None) -> None:
         self.ingested: list[_FakeMemory] = []
+        self.ingest_many_calls = 0
         self.reset_calls = 0
         self.save_calls: list[Path] = []
         self.load_calls: list[Path] = []
@@ -90,6 +91,14 @@ class _FakeEngram:
 
     async def ingest(self, memory: _FakeMemory) -> None:
         self.ingested.append(memory)
+
+    async def ingest_many(self, memories: object) -> None:
+        # Mirrors engram's MemorySystem.ingest_many default (loop of ingest)
+        # while letting tests assert the adapter used the batched entry point
+        # by inspecting ``ingest_many_calls``.
+        self.ingest_many_calls += 1
+        for memory in memories:  # type: ignore[attr-defined]
+            self.ingested.append(memory)
 
     async def recall(
         self,
@@ -194,6 +203,20 @@ def test_ingest_session_emits_one_memory_per_turn(fake_engram_module: None) -> N
     assert second.content == "hi back"
     # turn has no timestamp of its own → falls back to session_time.
     assert second.timestamp == "2024-01-01T00:00:00"
+
+
+def test_ingest_session_uses_batched_ingest_many(fake_engram_module: None) -> None:
+    """One ``ingest_many`` call per session — that's what unlocks engram's
+    pooled transformer forwards. Regressing to a per-turn ``ingest`` loop
+    would silently drop the ~2.6× ingestion speedup."""
+
+    engram = _FakeEngram()
+    adapter = EngramAdapter(_FakeProvider(), target=engram)
+
+    asyncio.run(adapter.ingest_session(_session(), case_id="case_a"))
+
+    assert engram.ingest_many_calls == 1
+    assert len(engram.ingested) == 2
 
 
 def test_ingest_session_metadata_sorted_and_includes_case_id(fake_engram_module: None) -> None:
