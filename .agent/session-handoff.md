@@ -5,6 +5,66 @@
 
 ---
 
+## Session: 2026-04-20 — PR-8 CLI subcommands
+
+### What Was Done
+
+**PR-8 (on `feat/cli-subcommands`, branched from `main` after PR-6/PR-7/PR-7.5 merged):** every remaining CLI subcommand landed in one shot. `run` already shipped in PR-7; this PR added `baseline`, `rejudge`, `compare`, `summarize`, `cache`.
+
+- `cli/baseline_cmd.py` — thin shortcut for `amb run ... --memory full-context`. Refactored `cli/run_cmd.py` so `baseline` and `run` share `_add_shared_run_arguments(parser, include_memory=...)`; baseline hides the memory-related flags (`--memory`, `--memory-config`, `--session-mapper`, `--result-mapper`) from argparse and injects the fixed values in its handler. `run_command` now reads those fields with `getattr(..., default)` so it works for both callers.
+- `cli/rejudge_cmd.py` — loads an existing `answers.json`, rebuilds each `QARecord` into a minimal `QAItem` via `_qa_from_record`, runs a fresh judge (currently only LongMemEval; LOCOMO / BEAM raise `NotImplementedError` until their judges land), rewrites `judge_runs` / `judge_time_ms`, and writes `answers.json` + `scorecard.{json,md}` + `meta.json` into a sibling `rejudged_<ts>/` directory (overridable via `--out`). Judge cache is populated for the new judge unless `--no-cache` is passed. Manifest is deep-copied with `dataclasses.replace(...)` so only the judge block + timestamp + argv change; all upstream cache keys (memory version, dataset descriptor, answer model) are preserved byte-for-byte.
+- `cli/compare_cmd.py` — diffs two `scorecard.json` files. Pure text output (markdown-compatible, no rich dep) so it pipes cleanly into PR descriptions. Sections: quality (overall / macro / token-F1), per-category accuracy (union across both), latency means, retrieval footprint means, throughput, evidence KPIs (when present). Deltas formatted as `+X.XXpp` for percentages, `+X.XXX` for raw floats; missing values print as `—`.
+- `cli/summarize_cmd.py` — re-renders a scorecard from an existing `answers.json`. `--format rich|markdown` flag (default rich). Lazy imports keep `summarize` cheap to import even when `rich` isn't installed.
+- `cli/cache_cmd.py` — nested subcommands `info | clear | gc`. `info` prints per-kind entry counts + bytes on disk + index file size. `clear --kind {ingestion|answers|judge|all}` requires `--yes` as a typo guard. `gc --before AGE` accepts `7d` / `12h` / `30m` / bare-float-as-days via `_parse_duration_days`.
+- `cli/main.py` — registers all six subcommands; dispatch table maps command name to handler.
+
+**Tests (new files; 74 new cases; 430 total):**
+- `test_cli_baseline_cmd.py` — parser rejects `--memory` on baseline, shares other run-style flags, handler fills in `memory="full-context"` before dispatching to `run_command`.
+- `test_cli_rejudge_cmd.py` — helper behavior (`_qa_from_record`, unsupported-benchmark rejection), missing/corrupt input handling, happy-path writes all four artifacts with the new judge's verdict, judge cache population behind `--no-cache`, default out-dir is sibling `rejudged_<ts>/`.
+- `test_cli_compare_cmd.py` — delta formatters, per-category union, evidence section shown only when present, benchmark-mismatch flag, end-to-end happy path + error paths.
+- `test_cli_summarize_cmd.py` — missing / corrupt input, markdown + rich output, parser shape.
+- `test_cli_cache_cmd.py` — duration parser accepts/rejects matrix, info / clear (with and without `--yes`) / gc (rejects bad duration, removes aged entries), parser shape.
+- `test_cli_main_dispatch.py` — parametrized dispatch check for all six subcommands, no-command prints help, `--version` exits 0.
+
+### Current State
+
+- Branch: `feat/cli-subcommands`. HEAD commit pending (see below — commit after this write).
+- Tests: 356 → 430 passed, still 1 skipped (POSIX-only symlink).
+- Lint: `ruff check src tests` → clean.
+- Types: `mypy src` → clean on 41 source files.
+- `python -m agent_memory_benchmark --help` lists all six subcommands.
+
+### What's Next
+
+- Merge `feat/cli-subcommands` to `main` with `--no-ff` following the established pattern.
+- **PR-9** — LOCOMO loader + judge (10-run majority vote). Second `BenchmarkJudge` implementation. When that lands, `rejudge_cmd._build_benchmark_judge` drops its `NotImplementedError` branch for `"locomo"`.
+- **PR-10** — HTTP adapter + `openapi.yaml` + `docs/http-api.md`. Third transport.
+- **PR-11** — BEAM loader + ability-specific judge prompts. Same pattern for extending the rejudge dispatcher.
+- **PR-12** — noise-aware replicates + `--publishable` gate + `docs/methodology.md`.
+
+### Open Questions
+
+- **Multi-benchmark rejudge.** Currently rejudge hard-codes LongMemEval. When PR-9 (LOCOMO) lands, the easiest extension is another `elif` branch in `_build_benchmark_judge`; the clean version is hoisting the benchmark-specific factory into `runner/judge_adapter.py` as e.g. `build_benchmark_judge(dataset_name, client, runs, temperature)` and having both the orchestrator and rejudge_cmd share it. Deferred until there's a second judge to justify the refactor (YAGNI).
+- **`amb compare` on runs with different benchmarks.** Currently flags the mismatch but still renders side-by-side. If that's confusing, we could `return 2` with an error — but there's a legitimate use case (full-context baseline vs. memory-system run on the same dataset), so the render-with-warning path stays for now.
+
+### Gotchas
+
+- **LongMemEval judge is single-run.** `LongMemEvalJudge(runs=1)` is a constructor invariant; `amb rejudge --judge-runs 5` will raise at judge-construction time. This is correct — LOCOMO's 10-run majority vote is a different protocol — but the error surface comes out of `_build_benchmark_judge`, not argparse. Good enough for now.
+- **`_parse_memory_config` is defensive.** Previously read `args.memory_config` directly; now `run_command` uses `getattr(args, "memory_config", [])` with `or []` because baseline's argparse namespace doesn't carry `memory_config`. Same for `memory`, `session_mapper`, `result_mapper`. Keeps the branchless dispatch.
+- **Rejudge writes a new run directory, not in-place.** The original run is never touched. `--out` overrides the default sibling `rejudged_<ts>/` location. No `--latest-pointer` update — if user wants `results/latest` to point at the new output, they re-run with that as `--out`.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main
+# Start PR-9: LOCOMO loader + LOCOMO judge (10-run majority vote).
+git checkout -b feat/locomo
+```
+
+---
+
 ## Session: 2026-04-20 — Evidence attribution: benchmark owns the math
 
 ### What Was Done
