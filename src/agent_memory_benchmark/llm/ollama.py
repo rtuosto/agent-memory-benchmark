@@ -13,6 +13,7 @@ uniformly available across Ollama versions.
 
 from __future__ import annotations
 
+import logging
 import os
 from types import TracebackType
 from typing import Any
@@ -20,6 +21,8 @@ from typing import Any
 import httpx
 
 from . import ChatResult, ProviderError
+
+_log = logging.getLogger(__name__)
 
 
 class OllamaError(ProviderError):
@@ -31,6 +34,13 @@ class OllamaError(ProviderError):
 
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:11434"
+_CHARS_PER_TOKEN_ESTIMATE = 4
+"""Conservative chars-per-token ratio used as a pre-flight truncation heuristic.
+
+English text averages ~4 characters per token for BPE/SentencePiece tokenizers.
+We use this only to decide whether to warn before dispatch; the authoritative
+check happens after the call by comparing ``prompt_eval_count`` to ``num_ctx``.
+"""
 
 
 class OllamaProvider:
@@ -82,6 +92,21 @@ class OllamaProvider:
         if json_mode:
             payload["format"] = "json"
 
+        # Pre-flight heuristic: if the prompt is clearly larger than
+        # ``num_ctx`` can hold, warn. Ollama silently truncates in this case
+        # — making the full-context baseline meaningless — so surfacing it
+        # early gives the user a chance to bump ``--num-ctx`` and re-run.
+        prompt_chars = len(system) + len(user)
+        estimated_prompt_tokens = prompt_chars // _CHARS_PER_TOKEN_ESTIMATE
+        if estimated_prompt_tokens > self._num_ctx:
+            _log.warning(
+                "Ollama prompt ~%d tokens exceeds num_ctx=%d for model %s; "
+                "Ollama will silently truncate. Pass --num-ctx to allocate more.",
+                estimated_prompt_tokens,
+                self._num_ctx,
+                self.model,
+            )
+
         resp = await self._client.post(f"{self._base}/api/chat", json=payload)
         if resp.status_code >= 400:
             raise OllamaError(
@@ -93,6 +118,18 @@ class OllamaProvider:
         text = message.get("content") or ""
         prompt_tokens = data.get("prompt_eval_count")
         completion_tokens = data.get("eval_count")
+        # Authoritative post-flight check using Ollama's own token count.
+        # When prompt_eval_count >= num_ctx, Ollama has definitely truncated;
+        # we emit a second-line warning so the log trail shows both the
+        # heuristic guess (pre) and the actual count (post).
+        if isinstance(prompt_tokens, int) and prompt_tokens >= self._num_ctx:
+            _log.warning(
+                "Ollama prompt_eval_count=%d >= num_ctx=%d for model %s "
+                "(truncation is near-certain).",
+                prompt_tokens,
+                self._num_ctx,
+                self.model,
+            )
         return ChatResult(
             text=text,
             model=self.model,

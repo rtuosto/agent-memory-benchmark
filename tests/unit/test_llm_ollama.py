@@ -145,3 +145,86 @@ async def test_does_not_close_injected_client(base_url: str) -> None:
         assert not client.is_closed
     finally:
         await client.aclose()
+
+
+async def test_chat_num_ctx_is_sent_on_options(base_url: str) -> None:
+    provider = OllamaProvider(model="llama3.1:8b", base_url=base_url, num_ctx=131072)
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post(f"{base_url}/api/chat").respond(json={"message": {"content": "ok"}})
+        await provider.chat(user="hi")
+    import json as _json
+
+    body = _json.loads(route.calls.last.request.content)
+    assert body["options"]["num_ctx"] == 131072
+
+
+async def test_chat_warns_when_prompt_chars_exceed_num_ctx(
+    base_url: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Pre-flight heuristic: oversize prompt must surface a WARNING.
+
+    The check is ``len(prompt)/4 > num_ctx``, so 40K chars of text with
+    a 1024-token budget trips the heuristic. We assert the log content so
+    the user sees a migration path (``--num-ctx``) in the message itself.
+    """
+
+    provider = OllamaProvider(model="llama3.1:8b", base_url=base_url, num_ctx=1024)
+    user_prompt = "word " * 10_000  # ~50K chars => ~12.5K estimated tokens
+    with respx.mock(assert_all_called=True) as router:
+        router.post(f"{base_url}/api/chat").respond(json={"message": {"content": "ok"}})
+        with caplog.at_level("WARNING", logger="agent_memory_benchmark.llm.ollama"):
+            await provider.chat(user=user_prompt)
+
+    assert any(
+        "exceeds num_ctx" in rec.message and "--num-ctx" in rec.message
+        for rec in caplog.records
+    )
+
+
+async def test_chat_warns_when_prompt_eval_count_hits_num_ctx(
+    base_url: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Authoritative post-flight warning when Ollama reports truncation."""
+
+    provider = OllamaProvider(model="llama3.1:8b", base_url=base_url, num_ctx=1024)
+    with respx.mock(assert_all_called=True) as router:
+        router.post(f"{base_url}/api/chat").respond(
+            json={
+                "message": {"content": "ok"},
+                "prompt_eval_count": 1024,  # exactly at the cap = truncation signal
+                "eval_count": 5,
+            }
+        )
+        with caplog.at_level("WARNING", logger="agent_memory_benchmark.llm.ollama"):
+            await provider.chat(user="tiny")
+
+    assert any(
+        "prompt_eval_count" in rec.message and "truncation" in rec.message
+        for rec in caplog.records
+    )
+
+
+async def test_chat_no_warning_under_num_ctx(
+    base_url: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Normal-sized prompt + prompt_eval_count < num_ctx produces no warning."""
+
+    provider = OllamaProvider(model="llama3.1:8b", base_url=base_url, num_ctx=8192)
+    with respx.mock(assert_all_called=True) as router:
+        router.post(f"{base_url}/api/chat").respond(
+            json={
+                "message": {"content": "ok"},
+                "prompt_eval_count": 100,
+                "eval_count": 5,
+            }
+        )
+        with caplog.at_level("WARNING", logger="agent_memory_benchmark.llm.ollama"):
+            await provider.chat(user="hello")
+
+    assert not any(
+        "exceeds num_ctx" in rec.message or "truncation" in rec.message
+        for rec in caplog.records
+    )

@@ -176,6 +176,52 @@ def test_stratified_indices_handles_zero_or_empty() -> None:
     assert _stratified_indices([_row("q0")], 0) == []
 
 
+def test_stratified_indices_terminates_when_limit_below_num_types() -> None:
+    """Guard against the infinite-loop regression.
+
+    With more question types than slots, the ``max(1, ...)`` floor cannot
+    be satisfied; the allocator must fall back to picking the ``limit``
+    largest types at one slot each rather than spinning forever.
+    """
+
+    rows: list[dict[str, Any]] = []
+    # 7 types × 10 rows (a=10, b=9, c=8, ..., g=4). Sizes strictly decreasing.
+    sizes = {"a": 10, "b": 9, "c": 8, "d": 7, "e": 6, "f": 5, "g": 4}
+    for qt, n in sizes.items():
+        for i in range(n):
+            rows.append(_row(f"{qt}{i}", question_type=qt))
+
+    idxs = _stratified_indices(rows, limit=3)
+
+    assert len(idxs) == 3
+    selected_types = {rows[i]["question_type"] for i in idxs}
+    # The 3 largest types (a, b, c) win.
+    assert selected_types == {"a", "b", "c"}
+
+
+def test_stratified_indices_limit_equals_num_types() -> None:
+    """Boundary: limit == num_types should give exactly one per type."""
+
+    rows: list[dict[str, Any]] = []
+    for qt in ("a", "b", "c"):
+        for i in range(5):
+            rows.append(_row(f"{qt}{i}", question_type=qt))
+
+    idxs = _stratified_indices(rows, limit=3)
+    assert len(idxs) == 3
+    assert {rows[i]["question_type"] for i in idxs} == {"a", "b", "c"}
+
+
+def test_dataset_stratified_limit_1_smoke() -> None:
+    """``--limit 1`` is the smoke-test path used in docs; must not hang."""
+
+    rows: list[dict[str, Any]] = []
+    for qt in ("a", "b", "c", "d", "e", "f", "g"):
+        rows.append(_row(f"{qt}0", question_type=qt))
+    ds = LongMemEvalDataset(rows, split="s", revision="rev0", limit=1, limit_strategy="stratified")
+    assert len(ds) == 1
+
+
 def test_dataset_limit_larger_than_rows_keeps_all() -> None:
     rows = [_row(f"q{i}") for i in range(3)]
     ds = LongMemEvalDataset(rows, split="s", revision="rev0", limit=99, limit_strategy="stratified")

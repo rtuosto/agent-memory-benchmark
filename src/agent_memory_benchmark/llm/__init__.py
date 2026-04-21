@@ -21,7 +21,7 @@ Ollama model names legitimately contain a colon (``llama3.1:8b``), so
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class ProviderError(Exception):
@@ -108,11 +108,18 @@ def build_provider(
     spec: str,
     *,
     ollama_base_url: str | None = None,
+    ollama_num_ctx: int | None = None,
     openai_api_key: str | None = None,
     openai_base_url: str | None = None,
     timeout: float = 600.0,
 ) -> LLMProvider:
     """Build a provider from a spec string.
+
+    ``ollama_num_ctx`` overrides the default context window for the Ollama
+    provider only (OpenAI models expose no equivalent knob). When ``None``,
+    the :class:`OllamaProvider` default (8192) applies. The benchmark's
+    full-context baseline needs this bumped (~131072) to avoid silent
+    truncation of 100K-token LongMemEval prompts.
 
     Unknown providers raise :class:`InvalidSpecError`. The ``openai`` kind
     raises :class:`ProviderUnavailableError` if the optional ``[openai]``
@@ -123,7 +130,14 @@ def build_provider(
     if provider == "ollama":
         from .ollama import OllamaProvider
 
-        return OllamaProvider(model=model, base_url=ollama_base_url, timeout=timeout)
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "base_url": ollama_base_url,
+            "timeout": timeout,
+        }
+        if ollama_num_ctx is not None:
+            kwargs["num_ctx"] = ollama_num_ctx
+        return OllamaProvider(**kwargs)
     if provider == "openai":
         from .openai import OpenAIProvider
 

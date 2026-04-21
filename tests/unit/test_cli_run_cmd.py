@@ -13,7 +13,11 @@ from pathlib import Path
 import pytest
 
 from agent_memory_benchmark.cli.main import build_parser
-from agent_memory_benchmark.cli.run_cmd import _parse_memory_config, add_run_subparser
+from agent_memory_benchmark.cli.run_cmd import (
+    _parse_memory_config,
+    _resolve_num_ctx,
+    add_run_subparser,
+)
 
 
 def test_parse_memory_config_parses_json_and_strings() -> None:
@@ -158,6 +162,69 @@ def test_parser_captures_session_and_result_mapper_flags() -> None:
     )
     assert args.session_mapper == "agent_memory_benchmark.compat.engram_shim:_to_engram_session"
     assert args.result_mapper == "agent_memory_benchmark.compat.engram_shim:_from_engram_answer"
+
+
+class TestNumCtxFlags:
+    def test_specific_beats_shared(self) -> None:
+        import argparse
+
+        args = argparse.Namespace(answer_num_ctx=131072, judge_num_ctx=None, num_ctx=8192)
+        assert _resolve_num_ctx(args, "answer_num_ctx") == 131072
+        assert _resolve_num_ctx(args, "judge_num_ctx") == 8192
+
+    def test_shared_applies_when_specific_absent(self) -> None:
+        import argparse
+
+        args = argparse.Namespace(answer_num_ctx=None, judge_num_ctx=None, num_ctx=65536)
+        assert _resolve_num_ctx(args, "answer_num_ctx") == 65536
+        assert _resolve_num_ctx(args, "judge_num_ctx") == 65536
+
+    def test_none_when_nothing_set(self) -> None:
+        import argparse
+
+        args = argparse.Namespace(answer_num_ctx=None, judge_num_ctx=None, num_ctx=None)
+        assert _resolve_num_ctx(args, "answer_num_ctx") is None
+        assert _resolve_num_ctx(args, "judge_num_ctx") is None
+
+    def test_parser_accepts_num_ctx_flags(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "run",
+                "longmemeval",
+                "--memory",
+                "full-context",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+                "--num-ctx",
+                "131072",
+                "--answer-num-ctx",
+                "65536",
+                "--judge-num-ctx",
+                "8192",
+            ]
+        )
+        assert args.num_ctx == 131072
+        assert args.answer_num_ctx == 65536
+        assert args.judge_num_ctx == 8192
+
+    def test_baseline_also_accepts_num_ctx(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "baseline",
+                "longmemeval",
+                "--answer-model",
+                "ollama:x",
+                "--judge-model",
+                "ollama:y",
+                "--num-ctx",
+                "131072",
+            ]
+        )
+        assert args.num_ctx == 131072
 
 
 def test_parser_mapper_flags_default_to_none() -> None:
