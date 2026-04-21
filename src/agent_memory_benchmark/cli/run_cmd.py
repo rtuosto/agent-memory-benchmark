@@ -59,15 +59,14 @@ def _add_shared_run_arguments(
     parser.add_argument(
         "dataset",
         choices=("longmemeval", "locomo", "beam"),
-        help="Dataset name. longmemeval is wired in PR-7; locomo (PR-9) / beam (PR-11) will "
-        "raise DatasetUnavailableError until their loaders land.",
+        help="Dataset name. longmemeval and locomo are wired; beam (PR-11) "
+        "raises DatasetUnavailableError until its loader lands.",
     )
     if include_memory:
         parser.add_argument(
             "--memory",
             required=True,
-            help="Memory adapter spec (e.g. 'full-context', 'python:pkg.mod:Cls', "
-            "'http://host').",
+            help="Memory adapter spec (e.g. 'full-context', 'python:pkg.mod:Cls', 'http://host').",
         )
     parser.add_argument("--answer-model", required=True, help="LLM spec: <provider>:<model>.")
     parser.add_argument(
@@ -82,6 +81,12 @@ def _add_shared_run_arguments(
         "--m-data",
         type=Path,
         help="Local path to LongMemEval M JSON (multi-GB; not auto-downloaded).",
+    )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        help="Local path to the dataset file for loaders that don't fetch from HF "
+        "(required for LOCOMO: points at locomo10.json).",
     )
     parser.add_argument("--limit", type=int, help="Truncate dataset to N questions.")
     parser.add_argument(
@@ -176,6 +181,7 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
                 judge_runs=args.judge_runs,
                 split=args.split,
                 m_data_path=args.m_data,
+                data_path=args.data,
                 dataset_limit=args.limit,
                 dataset_limit_strategy=args.limit_strategy,
                 memory_config=memory_config or None,

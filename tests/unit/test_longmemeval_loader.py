@@ -292,8 +292,8 @@ def test_load_dataset_longmemeval_requires_split() -> None:
         load_dataset("longmemeval")
 
 
-def test_load_dataset_locomo_is_reserved_for_pr9() -> None:
-    with pytest.raises(DatasetUnavailableError, match="PR-9"):
+def test_load_dataset_locomo_requires_path() -> None:
+    with pytest.raises(ValueError, match="requires a 'path'"):
         load_dataset("locomo")
 
 

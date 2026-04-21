@@ -27,6 +27,10 @@ from agent_memory_benchmark.judge import (
     LME_PROMPT_FINGERPRINTS,
     LME_PROMPT_TEMPLATES,
     LME_TEMPORAL_TEMPLATE,
+    LOCOMO_JUDGE_FINGERPRINT,
+    LOCOMO_JUDGE_USER_TEMPLATE,
+    LOCOMO_PROMPT_FINGERPRINTS,
+    LOCOMO_PROMPT_TEMPLATES,
     combined_fingerprint,
     fingerprint,
 )
@@ -91,6 +95,55 @@ def test_combined_fingerprint_is_order_independent() -> None:
         "single-session-preference": LME_PREFERENCE_TEMPLATE,
     }
     assert combined_fingerprint(shuffled) == LME_JUDGE_FINGERPRINT
+
+
+_LOCOMO_GOLDEN: dict[str, str] = {
+    "locomo": "73ad9d3dc9b755b310cbc77b573afd0086dab47ecc3775f2fb5f72fcc05a5280",
+}
+
+_LOCOMO_COMBINED_GOLDEN = "dff1155ec8266d13105fe91348cfdba55fe40c6f0c94600a29532f49ccbb645a"
+
+
+@pytest.mark.parametrize("name,expected", sorted(_LOCOMO_GOLDEN.items()))
+def test_locomo_prompt_fingerprint_is_locked(name: str, expected: str) -> None:
+    actual = LOCOMO_PROMPT_FINGERPRINTS[name]
+    assert actual == expected, (
+        f"LOCOMO judge prompt {name!r} has drifted:\n"
+        f"  expected: {expected}\n"
+        f"  actual:   {actual}\n"
+        "If this change is intentional, re-baseline per the docstring in this file."
+    )
+
+
+def test_locomo_prompt_catalog_is_exactly_one() -> None:
+    """LOCOMO uses a single template invoked N times for majority vote."""
+
+    assert set(LOCOMO_PROMPT_TEMPLATES) == set(_LOCOMO_GOLDEN)
+
+
+def test_locomo_combined_fingerprint_is_locked() -> None:
+    assert LOCOMO_JUDGE_FINGERPRINT == _LOCOMO_COMBINED_GOLDEN
+
+
+def test_locomo_template_has_three_named_placeholders() -> None:
+    """LOCOMO template is ``.format``-style with named slots."""
+
+    for key in ("question", "gold_answer", "generated_answer"):
+        assert "{" + key + "}" in LOCOMO_JUDGE_USER_TEMPLATE
+
+
+def test_locomo_template_trailing_instruction_locks_json_label() -> None:
+    """The parse path depends on the judge returning ``{"label": ...}``."""
+
+    assert LOCOMO_JUDGE_USER_TEMPLATE.rstrip().endswith(
+        'Just return the label CORRECT or WRONG in a json format with the key as "label".'
+    )
+
+
+def test_locomo_and_lme_combined_fingerprints_differ() -> None:
+    """Sanity: different template bundles produce different bundle digests."""
+
+    assert LOCOMO_JUDGE_FINGERPRINT != LME_JUDGE_FINGERPRINT
 
 
 def test_fingerprint_is_pure_sha256_of_utf8_bytes() -> None:

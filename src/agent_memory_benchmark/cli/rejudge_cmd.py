@@ -30,10 +30,10 @@ from pathlib import Path
 
 from ..cache.index import CacheIndexWriter
 from ..cache.keys import judge_cache_path, judge_key
-from ..judge.longmemeval import LME_JUDGE_FINGERPRINT
 from ..llm import build_provider
 from ..llm.judge_client import JudgeClient
-from ..runner.judge_adapter import BenchmarkJudge, LongMemEvalJudge
+from ..runner import build_benchmark_judge
+from ..runner.judge_adapter import BenchmarkJudge
 from ..runner.manifest import (
     QARecord,
     RunDir,
@@ -272,16 +272,7 @@ def _build_benchmark_judge(
     runs: int,
     temperature: float,
 ) -> BenchmarkJudge:
-    if dataset_name == "longmemeval":
-        return LongMemEvalJudge(
-            client,
-            runs=runs,
-            temperature=temperature,
-            bundle_fingerprint=LME_JUDGE_FINGERPRINT,
-        )
-    raise NotImplementedError(
-        f"{dataset_name!r} judge is not wired yet — LOCOMO lands in PR-9, BEAM in PR-11."
-    )
+    return build_benchmark_judge(dataset_name, client=client, runs=runs, temperature=temperature)
 
 
 __all__ = ["add_rejudge_subparser", "rejudge_command"]
