@@ -128,6 +128,25 @@ def _add_shared_run_arguments(
     parser.add_argument(
         "--ollama-base-url", help="Override Ollama base URL (default http://localhost:11434)."
     )
+    parser.add_argument(
+        "--num-ctx",
+        type=int,
+        help="Override Ollama num_ctx for BOTH answer and judge providers. "
+        "LongMemEval-S conversations are ~100K–150K tokens; the full-context "
+        "baseline needs at least 131072 to avoid silent truncation.",
+    )
+    parser.add_argument(
+        "--answer-num-ctx",
+        type=int,
+        help="Override Ollama num_ctx for the answer provider only "
+        "(takes precedence over --num-ctx).",
+    )
+    parser.add_argument(
+        "--judge-num-ctx",
+        type=int,
+        help="Override Ollama num_ctx for the judge provider only "
+        "(takes precedence over --num-ctx).",
+    )
     parser.add_argument("--openai-base-url")
 
 
@@ -172,6 +191,8 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
                 replicate_seed=args.replicate_seed,
                 cli_argv=argv if argv is not None else sys.argv,
                 ollama_base_url=args.ollama_base_url,
+                ollama_answer_num_ctx=_resolve_num_ctx(args, "answer_num_ctx"),
+                ollama_judge_num_ctx=_resolve_num_ctx(args, "judge_num_ctx"),
                 openai_base_url=args.openai_base_url,
             )
         )
@@ -182,6 +203,23 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
     print(f"Run complete. Output: {run_dir.path}")
     _render_summary(run_dir)
     return 0
+
+
+def _resolve_num_ctx(args: argparse.Namespace, specific_attr: str) -> int | None:
+    """Return the per-provider ``num_ctx`` override, falling back to ``--num-ctx``.
+
+    Specific flags (``--answer-num-ctx`` / ``--judge-num-ctx``) beat the
+    catch-all (``--num-ctx``); absence of both returns ``None`` so
+    :class:`OllamaProvider` uses its own default.
+    """
+
+    specific = getattr(args, specific_attr, None)
+    if specific is not None:
+        return int(specific)
+    shared = getattr(args, "num_ctx", None)
+    if shared is not None:
+        return int(shared)
+    return None
 
 
 def _parse_memory_config(items: list[str]) -> dict[str, Any]:
@@ -217,6 +255,7 @@ def _render_summary(run_dir: Any) -> None:
 
 __all__ = [
     "_add_shared_run_arguments",
+    "_resolve_num_ctx",
     "add_run_subparser",
     "run_command",
 ]

@@ -79,6 +79,8 @@ async def run_benchmark(
     replicate_seed: int | None = None,
     cli_argv: Sequence[str] | None = None,
     ollama_base_url: str | None = None,
+    ollama_answer_num_ctx: int | None = None,
+    ollama_judge_num_ctx: int | None = None,
     openai_api_key: str | None = None,
     openai_base_url: str | None = None,
 ) -> RunDir:
@@ -111,12 +113,14 @@ async def run_benchmark(
     answer_provider = build_provider(
         answer_model_spec,
         ollama_base_url=ollama_base_url,
+        ollama_num_ctx=ollama_answer_num_ctx,
         openai_api_key=openai_api_key,
         openai_base_url=openai_base_url,
     )
     judge_provider = build_provider(
         judge_model_spec,
         ollama_base_url=ollama_base_url,
+        ollama_num_ctx=ollama_judge_num_ctx,
         openai_api_key=openai_api_key,
         openai_base_url=openai_base_url,
     )

@@ -95,3 +95,21 @@ class TestBuildProvider:
         provider = build_provider("ollama:llama3.1:8b", ollama_base_url="http://x:1")
         assert provider.spec == "ollama:llama3.1:8b"
         assert provider.model == "llama3.1:8b"
+
+    def test_ollama_num_ctx_forwarded(self) -> None:
+        """``ollama_num_ctx`` must reach the OllamaProvider constructor."""
+
+        provider = build_provider(
+            "ollama:llama3.1:8b",
+            ollama_base_url="http://x:1",
+            ollama_num_ctx=131072,
+        )
+        # Accessing ``_num_ctx`` is a test-only peek — the public API is the
+        # value Ollama receives in ``options.num_ctx`` on ``chat(...)``.
+        assert provider._num_ctx == 131072  # noqa: SLF001
+
+    def test_ollama_num_ctx_none_uses_default(self) -> None:
+        """Omitting ``ollama_num_ctx`` keeps the OllamaProvider default (8192)."""
+
+        provider = build_provider("ollama:llama3.1:8b", ollama_base_url="http://x:1")
+        assert provider._num_ctx == 8192  # noqa: SLF001
