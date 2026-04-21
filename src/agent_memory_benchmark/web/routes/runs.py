@@ -76,6 +76,14 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
 
         import json as _json
 
+        chart_data = build_chart_data(
+            detail.scorecard,
+            baseline_detail.scorecard if baseline_detail else None,
+        )
+        chart_data["current_label"] = _short_run_label(detail.summary)
+        if baseline_detail is not None:
+            chart_data["baseline_label"] = _short_run_label(baseline_detail.summary)
+
         return templates.TemplateResponse(
             request,
             "run_detail.html",
@@ -84,12 +92,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 "scorecard": detail.scorecard,
                 "meta": detail.meta,
                 "scorecard_md": detail.scorecard_md,
-                "chart_data_json": _json.dumps(
-                    build_chart_data(
-                        detail.scorecard,
-                        baseline_detail.scorecard if baseline_detail else None,
-                    )
-                ),
+                "chart_data_json": _json.dumps(chart_data),
                 "baseline_summary": baseline_summary,
                 "baseline_mode": baseline_mode,  # "auto" | "manual" | "none"
                 "candidates": candidates,
@@ -108,6 +111,16 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         return FileResponse(path, media_type="application/json")
 
     return router
+
+
+def _short_run_label(summary: RunSummary) -> str:
+    """Compact identifier for chart legends — memory + tag, falling back to run ID."""
+
+    if summary.memory_system_id and summary.tag:
+        return f"{summary.memory_system_id} ({summary.tag})"
+    if summary.memory_system_id:
+        return summary.memory_system_id
+    return summary.run_id
 
 
 def _resolve_baseline(

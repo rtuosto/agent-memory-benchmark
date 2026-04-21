@@ -34,13 +34,13 @@
         quaternaryLine: "#f472b6",
     };
     const cool = {
-        primary: "rgba(96, 165, 250, 0.55)",      // blue-400
+        primary: "rgba(96, 165, 250, 0.7)",       // blue-400
         primaryLine: "#60a5fa",
-        secondary: "rgba(45, 212, 191, 0.55)",    // teal-400
+        secondary: "rgba(45, 212, 191, 0.7)",     // teal-400
         secondaryLine: "#2dd4bf",
-        tertiary: "rgba(129, 140, 248, 0.55)",    // indigo-400
+        tertiary: "rgba(129, 140, 248, 0.7)",     // indigo-400
         tertiaryLine: "#818cf8",
-        quaternary: "rgba(167, 139, 250, 0.55)",  // violet-400
+        quaternary: "rgba(167, 139, 250, 0.7)",   // violet-400
         quaternaryLine: "#a78bfa",
     };
 
@@ -50,25 +50,31 @@
     const scaleOpts = { grid: { color: gridColor }, ticks: { color: tickColor } };
 
     const hasBaseline = data.has_baseline === true;
+    // Labels carried in so legend entries identify actual runs, not generic
+    // "this run" / "baseline". Template falls back to defaults if missing.
+    const curLabel = data.current_label || "this run";
+    const baseLabel = data.baseline_label || "baseline";
 
-    initPerCategoryChart(data.per_category, hasBaseline);
-    initLatencyChart(data.latency, hasBaseline);
-    initFootprintChart(data.footprint, hasBaseline);
-    initEvidenceChart(data.evidence, hasBaseline);
+    initPerCategoryChart(data.per_category, hasBaseline, curLabel, baseLabel);
+    initLatencyChart(data.latency, hasBaseline, curLabel, baseLabel);
+    initFootprintChart(data.footprint, hasBaseline, curLabel, baseLabel);
+    initEvidenceChart(data.evidence, hasBaseline, curLabel, baseLabel);
 
-    function initPerCategoryChart(buckets, hasBaseline) {
+    function initPerCategoryChart(buckets, hasBaseline, curLabel, baseLabel) {
         const ctx = document.getElementById("chart-per-category");
         if (!ctx || !buckets || !buckets.length) return;
-        const datasets = [
-            ds("Accuracy (this run)", buckets, (b) => pct(b.accuracy), warm.primary, warm.primaryLine),
-            ds("Token-F1 (this run)", buckets, (b) => pct(b.token_f1), warm.secondary, warm.secondaryLine),
-        ];
-        if (hasBaseline) {
-            datasets.push(
-                ds("Accuracy (baseline)", buckets, (b) => pct(b.baseline_accuracy), cool.primary, cool.primaryLine),
-                ds("Token-F1 (baseline)", buckets, (b) => pct(b.baseline_token_f1), cool.secondary, cool.secondaryLine),
-            );
-        }
+        // In compare mode, collapse to accuracy-only so each category has
+        // exactly 2 bars (current vs baseline). Token-F1 lives in the
+        // compare table below where precision matters more than glanceability.
+        const datasets = hasBaseline
+            ? [
+                  ds(`Accuracy — ${curLabel}`, buckets, (b) => pct(b.accuracy), warm.primary, warm.primaryLine),
+                  ds(`Accuracy — ${baseLabel}`, buckets, (b) => pct(b.baseline_accuracy), cool.primary, cool.primaryLine),
+              ]
+            : [
+                  ds("Accuracy", buckets, (b) => pct(b.accuracy), warm.primary, warm.primaryLine),
+                  ds("Token-F1", buckets, (b) => pct(b.token_f1), warm.secondary, warm.secondaryLine),
+              ];
         new Chart(ctx, {
             type: "bar",
             data: { labels: buckets.map((b) => b.name), datasets },
@@ -98,14 +104,14 @@
         });
     }
 
-    function initLatencyChart(buckets, hasBaseline) {
+    function initLatencyChart(buckets, hasBaseline, curLabel, baseLabel) {
         const ctx = document.getElementById("chart-latency");
         if (!ctx || !buckets || !buckets.length) return;
 
         const datasets = hasBaseline
             ? [
-                  ds("mean (this run)", buckets, (b) => b.mean, warm.primary, warm.primaryLine),
-                  ds("mean (baseline)", buckets, (b) => b.baseline_mean, cool.primary, cool.primaryLine),
+                  ds(`mean — ${curLabel}`, buckets, (b) => b.mean, warm.primary, warm.primaryLine),
+                  ds(`mean — ${baseLabel}`, buckets, (b) => b.baseline_mean, cool.primary, cool.primaryLine),
               ]
             : [
                   ds("mean", buckets, (b) => b.mean, warm.primary, warm.primaryLine),
@@ -140,14 +146,14 @@
         });
     }
 
-    function initFootprintChart(buckets, hasBaseline) {
+    function initFootprintChart(buckets, hasBaseline, curLabel, baseLabel) {
         const ctx = document.getElementById("chart-footprint");
         if (!ctx || !buckets || !buckets.length) return;
 
         const datasets = hasBaseline
             ? [
-                  ds("mean (this run)", buckets, (b) => b.mean, warm.primary, warm.primaryLine),
-                  ds("mean (baseline)", buckets, (b) => b.baseline_mean, cool.primary, cool.primaryLine),
+                  ds(`mean — ${curLabel}`, buckets, (b) => b.mean, warm.primary, warm.primaryLine),
+                  ds(`mean — ${baseLabel}`, buckets, (b) => b.baseline_mean, cool.primary, cool.primaryLine),
               ]
             : [
                   ds("mean", buckets, (b) => b.mean, warm.primary, warm.primaryLine),
@@ -161,25 +167,31 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                scales: { x: scaleOpts, y: scaleOpts },
+                scales: {
+                    x: scaleOpts,
+                    // Log scale — units (~10) and tokens (~1500) differ by 2+
+                    // orders of magnitude; linear drowns the units bar.
+                    y: { ...scaleOpts, type: "logarithmic" },
+                },
                 plugins: { legend: { labels: { color: legendColor } } },
             },
         });
     }
 
-    function initEvidenceChart(buckets, hasBaseline) {
+    function initEvidenceChart(buckets, hasBaseline, curLabel, baseLabel) {
         const ctx = document.getElementById("chart-evidence");
         if (!ctx || !buckets || !buckets.length) return;
-        const datasets = [
-            ds("Completeness (this run)", buckets, (b) => pct(b.completeness), warm.primary, warm.primaryLine),
-            ds("Density (this run)", buckets, (b) => pct(b.density), warm.secondary, warm.secondaryLine),
-        ];
-        if (hasBaseline) {
-            datasets.push(
-                ds("Completeness (baseline)", buckets, (b) => pct(b.baseline_completeness), cool.primary, cool.primaryLine),
-                ds("Density (baseline)", buckets, (b) => pct(b.baseline_density), cool.secondary, cool.secondaryLine),
-            );
-        }
+        const datasets = hasBaseline
+            ? [
+                  ds(`Completeness — ${curLabel}`, buckets, (b) => pct(b.completeness), warm.primary, warm.primaryLine),
+                  ds(`Completeness — ${baseLabel}`, buckets, (b) => pct(b.baseline_completeness), cool.primary, cool.primaryLine),
+                  ds(`Density — ${curLabel}`, buckets, (b) => pct(b.density), warm.secondary, warm.secondaryLine),
+                  ds(`Density — ${baseLabel}`, buckets, (b) => pct(b.baseline_density), cool.secondary, cool.secondaryLine),
+              ]
+            : [
+                  ds("Completeness", buckets, (b) => pct(b.completeness), warm.primary, warm.primaryLine),
+                  ds("Density", buckets, (b) => pct(b.density), warm.secondary, warm.secondaryLine),
+              ];
         new Chart(ctx, {
             type: "bar",
             data: { labels: buckets.map((b) => b.name), datasets },

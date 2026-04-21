@@ -16,18 +16,22 @@ from __future__ import annotations
 
 from typing import Any
 
-# Latency buckets rendered in order; the scorecard may omit any of them
-# (e.g. ingestion_per_session on post-rename runs, or judge_per_question
-# when the benchmark wasn't judged).
+# Per-query latency buckets rendered in the "Latency" chart. Ingestion is
+# deliberately excluded — it lives in its own Ingestion section (cards +
+# own chart), and mixing a 50-second ingestion-per-case bar with 5ms
+# retrieval bars on a shared log scale squashes the per-query signal.
 _LATENCY_KEYS: tuple[str, ...] = (
-    "ingestion_per_case",
-    "ingestion_per_session",  # pre-rename compat
     "retrieval_per_query",
     "generation_per_query",
     "answer_total_per_query",
     "answer_discrepancy",
     "judge_per_question",
 )
+
+# Ingestion distribution keys coalesced under the canonical "ingestion_per_case"
+# label so pre-rename runs (ingestion_per_session) and post-rename runs share
+# the same bucket in comparisons. First non-empty payload wins.
+_INGESTION_KEYS: tuple[str, ...] = ("ingestion_per_case", "ingestion_per_session")
 
 _FOOTPRINT_KEYS: tuple[str, ...] = ("units_per_query", "tokens_per_query")
 
@@ -58,6 +62,12 @@ def build_chart_data(
     b_footprint = _as_dict(baseline.get("retrieval_footprint")) if baseline else {}
     b_evidence = _as_dict(baseline.get("evidence")) if baseline else {}
 
+    # Coalesce ingestion_per_session into ingestion_per_case so pre-rename
+    # and post-rename runs align in the per-case chart even when comparing
+    # across the rename boundary.
+    _coalesce_ingestion(latency)
+    _coalesce_ingestion(b_latency)
+
     return {
         "has_baseline": baseline is not None,
         "per_category": _per_category_paired(
@@ -67,6 +77,17 @@ def build_chart_data(
         "footprint": _distributions_paired(footprint, b_footprint, _FOOTPRINT_KEYS),
         "evidence": _evidence_paired(evidence, b_evidence),
     }
+
+
+def _coalesce_ingestion(latency: dict[str, Any]) -> None:
+    """Promote the pre-rename key so callers can key on ``ingestion_per_case``."""
+
+    if not latency:
+        return
+    if latency.get("ingestion_per_case") is None and isinstance(
+        latency.get("ingestion_per_session"), dict
+    ):
+        latency["ingestion_per_case"] = latency["ingestion_per_session"]
 
 
 def _per_category_paired(

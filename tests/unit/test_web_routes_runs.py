@@ -122,7 +122,9 @@ def test_run_detail_renders_kpis_and_chart_data(tmp_path: Path) -> None:
     assert match is not None
     chart_data = json.loads(match.group(1))
     assert chart_data["per_category"]
-    assert any(row["name"] == "ingestion_per_case" for row in chart_data["latency"])
+    # Latency chart excludes ingestion buckets (own section); retrieval stays.
+    assert any(row["name"] == "retrieval_per_query" for row in chart_data["latency"])
+    assert all("ingestion" not in row["name"] for row in chart_data["latency"])
 
 
 def test_run_detail_404s_on_unknown_run(tmp_path: Path) -> None:
