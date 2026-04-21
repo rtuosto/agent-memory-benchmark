@@ -87,6 +87,10 @@ results/<timestamp>_<benchmark>_<memory>_<answer_llm>/
 results/latest       # symlink / Windows junction to most recent run
 ```
 
+### Porting predecessor scorecards
+
+`scripts/port_predecessor_scorecard.py` remaps a flat `agent-memory`-era `scorecard.json` into this repo's nested layout so `amb compare` produces meaningful deltas. Maps `quality.*`, `latency_ms.*_per_query/_session`, and `retrieval_footprint.*`; deliberately drops `evidence.*` and `throughput.*` because the predecessor's session-level evidence metrics and this repo's turn/unit/token KPIs measure different things. Idempotent; preserves the original as `scorecard.legacy.json`.
+
 ## Non-functional invariants
 
 - **Bit-stable prompts.** Judge prompt text is a module constant with a SHA-256 fingerprint checked in CI (`tests/unit/test_judge_prompts_stable.py`). Changes require an explicit re-baseline and are called out in `docs/methodology.md`.
