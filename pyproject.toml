@@ -85,3 +85,18 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# engram is an optional external dependency (~/code/engram/). It has no
+# published type stubs; this adapter fails loudly at runtime if it's
+# missing, so we silence the import-not-found report here rather than
+# requiring engram to be installed in every mypy environment.
+module = "engram"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# python-dateutil publishes its stubs as `types-python-dateutil` which
+# isn't a hard dev dep here; ignore the missing stubs report for the
+# small surface we use (just `dateutil.parser.parse`).
+module = "dateutil.*"
+ignore_missing_imports = true

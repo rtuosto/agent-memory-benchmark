@@ -5,6 +5,7 @@ grammar is intentionally small so adapter selection can be reasoned about
 directly from the command line::
 
     full-context                 -> FullContextAdapter
+    engram                       -> EngramAdapter
     python:pkg.module:ClassName  -> PythonAdapter
     http(s)://host:port          -> HttpAdapter
 
@@ -18,6 +19,7 @@ from typing import Any
 
 from ..llm import LLMProvider
 from .base import MemoryAdapter
+from .engram_adapter import EngramAdapter
 from .full_context import FullContextAdapter
 from .http_adapter import HttpAdapter
 from .python_adapter import PythonAdapter, ResultMapper, SessionMapper
@@ -88,6 +90,20 @@ def resolve_adapter(
             raise AdapterSpecError("--memory-header is only valid for http adapters.")
         return FullContextAdapter(answer_provider)
 
+    if kind == "engram" or spec == "engram":
+        if answer_provider is None:
+            raise AdapterSpecError(
+                "engram requires an answer_provider (engram itself never calls an LLM; "
+                "the adapter generates the answer from the RecallResult)."
+            )
+        if session_mapper is not None or result_mapper is not None:
+            raise AdapterSpecError(
+                "session_mapper / result_mapper are only valid for python adapters."
+            )
+        if http_headers is not None:
+            raise AdapterSpecError("--memory-header is only valid for http adapters.")
+        return EngramAdapter(answer_provider, **(config or {}))
+
     if kind == "python":
         if not target:
             raise AdapterSpecError("python adapter needs a target: python:pkg.module:ClassName")
@@ -102,7 +118,7 @@ def resolve_adapter(
 
     raise AdapterSpecError(
         f"Unknown adapter kind {kind!r} in spec {spec!r}; "
-        "supported: 'full-context', 'python:...', 'http(s)://...'."
+        "supported: 'full-context', 'engram', 'python:...', 'http(s)://...'."
     )
 
 
