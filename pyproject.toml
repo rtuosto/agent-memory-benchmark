@@ -85,3 +85,11 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# engram is an optional external dependency (~/code/engram/). It has no
+# published type stubs; this adapter fails loudly at runtime if it's
+# missing, so we silence the import-not-found report here rather than
+# requiring engram to be installed in every mypy environment.
+module = "engram"
+ignore_missing_imports = true
