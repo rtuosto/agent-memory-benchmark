@@ -16,6 +16,7 @@ whole dance.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +24,7 @@ from fastapi.responses import RedirectResponse
 
 from ..cost import PRICE_TABLE_DATE, estimate_cost
 from ..jobs import JobManager, JobSpec
+from ..models import available_models, memory_adapter_presets
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
@@ -45,12 +47,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         return templates.TemplateResponse(
             request,
             "job_new.html",
-            {
-                "form": _default_form_values(),
-                "errors": [],
-                "estimate": None,
-                "needs_confirm": False,
-            },
+            _form_context(_default_form_values(), errors=[]),
         )
 
     @router.post("/jobs")
@@ -75,12 +72,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
             return templates.TemplateResponse(
                 request,
                 "job_new.html",
-                {
-                    "form": values,
-                    "errors": errors,
-                    "estimate": None,
-                    "needs_confirm": False,
-                },
+                _form_context(values, errors=errors),
                 status_code=400,
             )
 
@@ -99,14 +91,13 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
             return templates.TemplateResponse(
                 request,
                 "job_new.html",
-                {
-                    "form": values,
-                    "errors": [],
-                    "estimate": estimate,
-                    "price_table_date": PRICE_TABLE_DATE,
-                    "needs_confirm": True,
-                    "preview_argv": spec.to_argv(),
-                },
+                _form_context(
+                    values,
+                    errors=[],
+                    estimate=estimate,
+                    needs_confirm=True,
+                    preview_argv=spec.to_argv(),
+                ),
             )
 
         manager: JobManager = request.app.state.job_manager
@@ -154,6 +145,61 @@ def _str_or_none(v: object) -> str | None:
         return None
     s = str(v).strip()
     return s or None
+
+
+def _form_context(
+    values: Mapping[str, object],
+    *,
+    errors: list[str],
+    estimate: object = None,
+    needs_confirm: bool = False,
+    preview_argv: list[str] | None = None,
+) -> dict[str, object]:
+    """Build the template context for every render of ``job_new.html``.
+
+    Centralizes the choice-list lookups so adding a new dropdown only
+    touches this helper + the template. The current selections are
+    reflected through ``form`` so a user's custom entry survives a
+    validation error or confirm page re-render.
+    """
+
+    model_choices = available_models()
+    memory_choices = memory_adapter_presets()
+    ctx: dict[str, object] = {
+        "form": values,
+        "errors": errors,
+        "estimate": estimate,
+        "needs_confirm": needs_confirm,
+        "model_choices": _choices_including_current(
+            model_choices,
+            *_as_model_current(values),
+        ),
+        "memory_choices": _choices_including_current(memory_choices, values.get("memory")),
+    }
+    if preview_argv is not None:
+        ctx["preview_argv"] = preview_argv
+        ctx["price_table_date"] = PRICE_TABLE_DATE
+    return ctx
+
+
+def _as_model_current(values: Mapping[str, object]) -> tuple[object, object]:
+    return values.get("answer_model"), values.get("judge_model")
+
+
+def _choices_including_current(choices: list[str], *current: object) -> list[str]:
+    """Ensure the user's current selections are in the dropdown.
+
+    A custom ``python:my.pkg:Cls`` memory spec (or a user-typed model)
+    must round-trip across re-renders. We append the current value to
+    the choice list if it's not already there so the ``<select>``
+    can select it on reload.
+    """
+
+    out = list(choices)
+    for c in current:
+        if isinstance(c, str) and c and c not in out:
+            out.append(c)
+    return out
 
 
 def _default_form_values() -> dict[str, object]:

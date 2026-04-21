@@ -230,9 +230,12 @@ def _extract_timestamp(run_id: str) -> str | None:
     if len(date_part) != 10 or len(time_part) != 6:
         return None
     try:
-        return datetime.strptime(
-            f"{date_part} {time_part}", "%Y-%m-%d %H%M%S"
-        ).isoformat(sep=" ")
+        # Emit ISO-8601 with a ``Z`` so the browser can parse as UTC and
+        # convert to the viewer's local TZ via ``<time datetime="...">``.
+        # The runner writes run directories in UTC (cf.
+        # ``runner/results.py``), so the naive parse is safe.
+        dt = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H%M%S")
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except ValueError:
         return None
 

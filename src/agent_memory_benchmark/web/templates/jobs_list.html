@@ -25,7 +25,7 @@
     <tbody>
     {% for job in jobs %}
         <tr>
-            <td><a href="/jobs/{{ job.job_id }}">{{ job.created_at }}</a></td>
+            <td><a href="/jobs/{{ job.job_id }}"><time datetime="{{ job.created_at }}">{{ job.created_at }}</time></a></td>
             <td><span class="job-state job-state-{{ job.state }}">{{ job.state }}</span></td>
             <td>{{ job.dataset }}</td>
             <td><code>{{ job.memory }}</code></td>

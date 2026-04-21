@@ -95,17 +95,29 @@
 
     <div class="form-row">
         <label for="memory">Memory adapter</label>
-        <input id="memory" name="memory" value="{{ form.memory or '' }}" placeholder="full-context / python:mod:Cls / http://host">
+        <select id="memory" name="memory">
+            {% for choice in memory_choices %}
+            <option value="{{ choice }}" {% if form.memory == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
     </div>
 
     <div class="form-row">
         <label for="answer_model">Answer model</label>
-        <input id="answer_model" name="answer_model" value="{{ form.answer_model or '' }}" placeholder="ollama:llama3.1:8b / openai:gpt-4o-mini">
+        <select id="answer_model" name="answer_model">
+            {% for choice in model_choices %}
+            <option value="{{ choice }}" {% if form.answer_model == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
     </div>
 
     <div class="form-row">
         <label for="judge_model">Judge model</label>
-        <input id="judge_model" name="judge_model" value="{{ form.judge_model or '' }}" placeholder="ollama:llama3.1:8b / openai:gpt-4o-mini">
+        <select id="judge_model" name="judge_model">
+            {% for choice in model_choices %}
+            <option value="{{ choice }}" {% if form.judge_model == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
     </div>
 
     <div class="form-row">

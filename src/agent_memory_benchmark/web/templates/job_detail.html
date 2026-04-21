@@ -17,9 +17,9 @@
     <div><span class="muted">Answer:</span> <code>{{ job.answer_model }}</code></div>
     <div><span class="muted">Judge:</span> <code>{{ job.judge_model }}</code></div>
     <div><span class="muted">Tag:</span> {{ job.tag or "—" }}</div>
-    <div><span class="muted">Created:</span> {{ job.created_at }}</div>
-    <div><span class="muted">Started:</span> {{ job.started_at or "—" }}</div>
-    <div><span class="muted">Finished:</span> {{ job.finished_at or "—" }}</div>
+    <div><span class="muted">Created:</span> <time datetime="{{ job.created_at }}">{{ job.created_at }}</time></div>
+    <div><span class="muted">Started:</span> {% if job.started_at %}<time datetime="{{ job.started_at }}">{{ job.started_at }}</time>{% else %}—{% endif %}</div>
+    <div><span class="muted">Finished:</span> {% if job.finished_at %}<time datetime="{{ job.finished_at }}">{{ job.finished_at }}</time>{% else %}—{% endif %}</div>
     <div><span class="muted">PID:</span> {{ job.pid or "—" }}</div>
     <div><span class="muted">Exit code:</span> {{ job.exit_code if job.exit_code is not none else "—" }}</div>
 </div>

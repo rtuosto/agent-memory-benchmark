@@ -23,7 +23,7 @@
     <tbody>
     {% for run in runs %}
         <tr>
-            <td><a href="/runs/{{ run.run_id }}">{{ run.timestamp or run.run_id }}</a></td>
+            <td><a href="/runs/{{ run.run_id }}">{% if run.timestamp %}<time datetime="{{ run.timestamp }}">{{ run.timestamp }}</time>{% else %}{{ run.run_id }}{% endif %}</a></td>
             <td>{{ run.benchmark or "—" }}</td>
             <td>
                 {{ run.memory_system_id or "—" }}
