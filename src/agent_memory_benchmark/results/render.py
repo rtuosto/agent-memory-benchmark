@@ -140,7 +140,7 @@ def _dist_line(label: str, dist: Distribution | None) -> str:
 
 def _latency_rows(sc: Scorecard) -> list[str]:
     rows: list[tuple[str, Distribution | None]] = [
-        ("ingestion per session", sc.ingestion_per_session_ms),
+        ("ingestion per case", sc.ingestion_per_case_ms),
         ("retrieval per query", sc.retrieval_per_query_ms),
         ("generation per query", sc.generation_per_query_ms),
         ("answer total (runner-measured)", sc.answer_total_per_query_ms),
@@ -197,7 +197,7 @@ def print_scorecard_rich(sc: Scorecard, *, manifest: RunManifest | None = None) 
     latency.add_column("max")
     latency.add_column("n")
     for label, dist in [
-        ("ingestion/session", sc.ingestion_per_session_ms),
+        ("ingestion/case", sc.ingestion_per_case_ms),
         ("retrieval/query", sc.retrieval_per_query_ms),
         ("generation/query", sc.generation_per_query_ms),
         ("answer_total/query", sc.answer_total_per_query_ms),

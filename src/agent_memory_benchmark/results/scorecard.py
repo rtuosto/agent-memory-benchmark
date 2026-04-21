@@ -83,7 +83,16 @@ class Scorecard:
     overall_token_f1: float | None
     per_category: dict[str, CategoryStats] = field(default_factory=dict)
 
-    ingestion_per_session_ms: Distribution | None = None
+    # Per-case ingest wall time — one sample per QA record, where the
+    # record carries its case's total ingest time (the runner sums all
+    # ingest_session() calls within a case into ingestion_time_ms on the
+    # record). So with N questions across M cases where each case has K
+    # sessions, n here is N records not M*K sessions. True per-session
+    # granularity is not currently captured — the runner only retains the
+    # per-case total. If per-session timings become interesting (e.g. for
+    # spotting pathological outlier sessions), the orchestrator would need
+    # to emit a parallel distribution.
+    ingestion_per_case_ms: Distribution | None = None
     ingestion_total_ms: float = 0.0
     retrieval_per_query_ms: Distribution | None = None
     generation_per_query_ms: Distribution | None = None
@@ -130,7 +139,7 @@ def build_scorecard(records: list[QARecord], *, benchmark: str | None = None) ->
     per_category = _merge_category_stats(per_cat_acc, per_cat_f1)
     macro_acc = _macro(per_category)
 
-    ing_per_session = _distribution(
+    ing_per_case = _distribution(
         [r.ingestion_time_ms for r in records if r.ingestion_time_ms > 0]
     )
     ingestion_total = sum(r.ingestion_time_ms for r in records)
@@ -155,7 +164,7 @@ def build_scorecard(records: list[QARecord], *, benchmark: str | None = None) ->
         macro_accuracy=macro_acc,
         overall_token_f1=overall_f1,
         per_category=per_category,
-        ingestion_per_session_ms=ing_per_session,
+        ingestion_per_case_ms=ing_per_case,
         ingestion_total_ms=ingestion_total,
         retrieval_per_query_ms=ret,
         generation_per_query_ms=gen,
@@ -487,7 +496,7 @@ def scorecard_to_dict(sc: Scorecard) -> dict[str, Any]:
             "judge_std_by_question": sc.judge_std_by_question,
         },
         "latency_ms": {
-            "ingestion_per_session": _dist(sc.ingestion_per_session_ms),
+            "ingestion_per_case": _dist(sc.ingestion_per_case_ms),
             "ingestion_total": sc.ingestion_total_ms,
             "retrieval_per_query": _dist(sc.retrieval_per_query_ms),
             "generation_per_query": _dist(sc.generation_per_query_ms),

@@ -130,7 +130,7 @@ def _render_compare(
             [
                 (label, _dig(a, f"latency_ms.{key}.mean"), _dig(b, f"latency_ms.{key}.mean"))
                 for label, key in (
-                    ("ingestion_per_session", "ingestion_per_session"),
+                    ("ingestion_per_case", "ingestion_per_case"),
                     ("retrieval_per_query", "retrieval_per_query"),
                     ("generation_per_query", "generation_per_query"),
                     ("answer_total_per_query", "answer_total_per_query"),

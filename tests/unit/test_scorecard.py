@@ -140,8 +140,8 @@ def test_ingestion_distribution_only_counts_nonzero() -> None:
         _record(key="q3::0", ingestion_ms=200.0),
     ]
     sc = build_scorecard(records)
-    assert sc.ingestion_per_session_ms is not None
-    assert sc.ingestion_per_session_ms.n == 2
+    assert sc.ingestion_per_case_ms is not None
+    assert sc.ingestion_per_case_ms.n == 2
 
 
 def test_throughput_queries_per_sec_is_reported() -> None:
@@ -272,7 +272,7 @@ def test_scorecard_to_dict_matches_plan_shape() -> None:
         "per_category",
     }
     assert set(payload["latency_ms"]) >= {
-        "ingestion_per_session",
+        "ingestion_per_case",
         "retrieval_per_query",
         "generation_per_query",
         "answer_total_per_query",
