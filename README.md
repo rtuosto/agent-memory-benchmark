@@ -60,7 +60,18 @@ pip install -e ".[web]"
 amb serve --port 8000 --results-dir results
 ```
 
-Binds to `127.0.0.1` only — no auth, local tool. What it does:
+Binds to `127.0.0.1` by default — no auth, local tool.
+
+To view from a phone or another device on your [Tailscale](https://tailscale.com/) tailnet:
+
+```bash
+amb serve --tailscale
+# amb serve → http://<your-host>.ts.net:8000  (bind=100.x.y.z, ...)
+```
+
+`--tailscale` resolves this machine's tailnet IPv4 via the `tailscale` CLI and binds to it. Tailscale's ACLs already gate access to tailnet members, so the dashboard stays off the public internet. For a custom bind (e.g. `0.0.0.0`) use `--host` instead — it's mutually exclusive with `--tailscale`.
+
+What the dashboard does:
 
 - **Runs list** at `/runs` — sortable table of every run under `results/`, one row per `<timestamp>_<benchmark>_<memory>_<model>_<tag>/` directory.
 - **Run detail** at `/runs/{id}` — KPI cards (overall / macro accuracy, throughput), a dedicated Ingestion section (total time + per-case mean/p95 + sessions/sec), and four Chart.js visualizations (per-category accuracy, per-query latency log scale, retrieval footprint log scale, evidence KPIs).
