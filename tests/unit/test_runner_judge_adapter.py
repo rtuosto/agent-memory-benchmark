@@ -6,6 +6,10 @@ import asyncio
 
 import pytest
 
+from agent_memory_benchmark.judge.beam import (
+    BEAM_JUDGE_FINGERPRINT,
+    BEAM_PROMPT_FINGERPRINTS,
+)
 from agent_memory_benchmark.judge.locomo import (
     LOCOMO_JUDGE_FINGERPRINT,
     LOCOMO_PROMPT_FINGERPRINTS,
@@ -14,6 +18,7 @@ from agent_memory_benchmark.judge.longmemeval import LME_JUDGE_FINGERPRINT, LME_
 from agent_memory_benchmark.llm import ChatResult
 from agent_memory_benchmark.llm.judge_client import JudgeClient
 from agent_memory_benchmark.runner.judge_adapter import (
+    BeamJudge,
     LocomoJudge,
     LongMemEvalJudge,
     _template_key_for,
@@ -223,4 +228,78 @@ def test_locomo_judge_rejects_zero_runs() -> None:
 def test_locomo_judge_reports_time() -> None:
     judge, _ = _locomo_judge(['{"label": "CORRECT"}'])
     outcome = asyncio.run(judge.judge(_qa(), "gen"))
+    assert outcome.judge_time_ms >= 0.0
+
+
+def _beam_judge(response: str = "yes") -> tuple[BeamJudge, _FakeProvider]:
+    provider = _FakeProvider(response)
+    client = JudgeClient(provider, temperature=0.0)
+    judge = BeamJudge(
+        client,
+        runs=1,
+        temperature=0.0,
+        bundle_fingerprint=BEAM_JUDGE_FINGERPRINT,
+    )
+    return judge, provider
+
+
+def _beam_qa(ability: str, *, question_id: str = "q1") -> QAItem:
+    return QAItem(
+        question_id=question_id,
+        question="Q?",
+        gold="A",
+        question_type=ability,
+    )
+
+
+def test_beam_judge_parses_yes() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("multi-hop-reasoning"), "gen"))
+    assert outcome.verdicts == [{"correct": True, "raw": "yes"}]
+
+
+def test_beam_judge_selects_temporal_template() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("temporal-reasoning"), "19 days"))
+    assert outcome.prompt_fingerprint == BEAM_PROMPT_FINGERPRINTS["temporal"]
+
+
+def test_beam_judge_selects_abstention_template() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("abstention"), "I don't know"))
+    assert outcome.prompt_fingerprint == BEAM_PROMPT_FINGERPRINTS["abstention"]
+
+
+def test_beam_judge_selects_event_ordering_template() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("event-ordering"), "A,B,C"))
+    assert outcome.prompt_fingerprint == BEAM_PROMPT_FINGERPRINTS["event-ordering"]
+
+
+def test_beam_judge_falls_back_to_general_for_unknown_ability() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("mystery-ability"), "gen"))
+    assert outcome.prompt_fingerprint == BEAM_PROMPT_FINGERPRINTS["general"]
+
+
+def test_beam_judge_rejects_multi_run() -> None:
+    provider = _FakeProvider("yes")
+    client = JudgeClient(provider, temperature=0.0)
+    with pytest.raises(ValueError, match="supports --judge-runs 1"):
+        BeamJudge(client, runs=3, temperature=0.0, bundle_fingerprint=BEAM_JUDGE_FINGERPRINT)
+
+
+def test_beam_prompt_fingerprint_matches_judge_write() -> None:
+    """Cache-lookup invariant: the fingerprint the orchestrator asks for
+    must equal the fingerprint the judge embeds in its outcome."""
+
+    judge, _ = _beam_judge("yes")
+    qa = _beam_qa("temporal-reasoning")
+    outcome = asyncio.run(judge.judge(qa, "gen"))
+    assert judge.prompt_fingerprint(qa) == outcome.prompt_fingerprint
+
+
+def test_beam_judge_reports_time() -> None:
+    judge, _ = _beam_judge("yes")
+    outcome = asyncio.run(judge.judge(_beam_qa("knowledge-update"), "gen"))
     assert outcome.judge_time_ms >= 0.0

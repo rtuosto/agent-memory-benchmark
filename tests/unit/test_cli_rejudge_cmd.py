@@ -126,8 +126,8 @@ class TestRejudgeHelpers:
 
     def test_build_benchmark_judge_rejects_unsupported(self) -> None:
         client = JudgeClient(_FakeProvider())
-        with pytest.raises(NotImplementedError):
-            _build_benchmark_judge("beam", client=client, runs=1, temperature=0.0)
+        with pytest.raises(ValueError, match="Unknown dataset_name"):
+            _build_benchmark_judge("squad", client=client, runs=1, temperature=0.0)
 
     def test_build_benchmark_judge_routes_locomo(self) -> None:
         client = JudgeClient(_FakeProvider())
@@ -135,6 +135,13 @@ class TestRejudgeHelpers:
         from agent_memory_benchmark.runner.judge_adapter import LocomoJudge
 
         assert isinstance(judge, LocomoJudge)
+
+    def test_build_benchmark_judge_routes_beam(self) -> None:
+        client = JudgeClient(_FakeProvider())
+        judge = _build_benchmark_judge("beam", client=client, runs=1, temperature=0.0)
+        from agent_memory_benchmark.runner.judge_adapter import BeamJudge
+
+        assert isinstance(judge, BeamJudge)
 
 
 class TestRejudgeCommand:

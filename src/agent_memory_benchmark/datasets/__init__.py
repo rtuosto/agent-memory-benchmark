@@ -4,9 +4,6 @@ The runner holds a single ``DatasetAdapter`` and iterates it for
 :class:`~agent_memory_benchmark.types.BenchmarkCase` instances. Each
 adapter subclass knows how to source its dataset (HF-hosted, local JSON,
 etc.) and how to derive a ``descriptor_hash`` that feeds the cache key.
-
-BEAM lands in PR-11; ``load_dataset`` raises a descriptive error for it
-until then.
 """
 
 from __future__ import annotations
@@ -16,6 +13,25 @@ from typing import Any
 
 from ..types import DatasetName
 from .base import DatasetAdapter
+from .beam import (
+    CANONICAL_ABILITIES as BEAM_CANONICAL_ABILITIES,
+)
+from .beam import (
+    HF_DATASET_ID as BEAM_HF_DATASET_ID,
+)
+from .beam import (
+    HF_DATASET_ID_10M as BEAM_HF_DATASET_ID_10M,
+)
+from .beam import (
+    HF_REVISION as BEAM_HF_REVISION,
+)
+from .beam import (
+    VALID_VARIANTS as BEAM_VALID_VARIANTS,
+)
+from .beam import (
+    BeamDataset,
+    load_beam,
+)
 from .locomo import LocomoDataset, load_locomo
 from .longmemeval import (
     HF_DATASET_ID,
@@ -40,8 +56,8 @@ def load_dataset(name: str, /, **kwargs: Any) -> DatasetAdapter:
       ``m_path``, ``revision``, ``limit``, ``limit_strategy``.
     - ``"locomo"`` — kwargs: ``path`` (required, local ``locomo10.json``),
       ``limit``.
-
-    BEAM raises :class:`DatasetUnavailableError` until its loader lands.
+    - ``"beam"`` — kwargs: ``variant`` (``"beam"`` | ``"beam-10m"``),
+      ``revision``, ``split``, ``abilities``, ``limit``.
     """
 
     normalized = name.strip().lower()
@@ -64,11 +80,17 @@ def load_dataset(name: str, /, **kwargs: Any) -> DatasetAdapter:
             raise TypeError(f"path must be str | Path, got {type(path).__name__}")
         return load_locomo(path, **kwargs)
     if normalized == "beam":
-        raise DatasetUnavailableError("BEAM loader lands in PR-11.")
+        return load_beam(**kwargs)
     raise ValueError(f"Unknown dataset {name!r}; expected one of: longmemeval, locomo, beam.")
 
 
 __all__ = [
+    "BEAM_CANONICAL_ABILITIES",
+    "BEAM_HF_DATASET_ID",
+    "BEAM_HF_DATASET_ID_10M",
+    "BEAM_HF_REVISION",
+    "BEAM_VALID_VARIANTS",
+    "BeamDataset",
     "DatasetAdapter",
     "DatasetName",
     "DatasetUnavailableError",
@@ -78,6 +100,7 @@ __all__ = [
     "HF_S_FILENAME",
     "LocomoDataset",
     "LongMemEvalDataset",
+    "load_beam",
     "load_dataset",
     "load_locomo",
     "load_longmemeval",

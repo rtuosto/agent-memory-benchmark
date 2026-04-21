@@ -19,6 +19,13 @@ from __future__ import annotations
 import pytest
 
 from agent_memory_benchmark.judge import (
+    BEAM_ABSTENTION_TEMPLATE,
+    BEAM_EVENT_ORDERING_TEMPLATE,
+    BEAM_GENERAL_TEMPLATE,
+    BEAM_JUDGE_FINGERPRINT,
+    BEAM_PROMPT_FINGERPRINTS,
+    BEAM_PROMPT_TEMPLATES,
+    BEAM_TEMPORAL_TEMPLATE,
     LME_ABSTENTION_TEMPLATE,
     LME_GENERAL_TEMPLATE,
     LME_JUDGE_FINGERPRINT,
@@ -153,3 +160,66 @@ def test_fingerprint_is_pure_sha256_of_utf8_bytes() -> None:
 
     expected = hashlib.sha256(b"hello").hexdigest()
     assert fingerprint("hello") == expected
+
+
+_BEAM_GOLDEN: dict[str, str] = {
+    "abstention": "00ed31aa00ff120bae248db9e5d1b4f3f44610874f159a0cae246834c10ccd6f",
+    "event-ordering": "6fca7bb17398c1562075658cd6ce53ba877ea815c0b2f338d3970139ed5588e7",
+    "general": "4d2ba49c03f82b3ca73173a4794e3ca4845ace58e53710f5edbff5096048d010",
+    "temporal": "80601d4a1eba2567dfe64838f0421cf126d8de1442fc12dde127d19a4c6f7d2f",
+}
+
+_BEAM_COMBINED_GOLDEN = "671c56e0e99d40c92c6dcdb557b688e0323fc98fa7fa43b626ea69fb634c70a4"
+
+
+@pytest.mark.parametrize("name,expected", sorted(_BEAM_GOLDEN.items()))
+def test_beam_prompt_fingerprint_is_locked(name: str, expected: str) -> None:
+    actual = BEAM_PROMPT_FINGERPRINTS[name]
+    assert actual == expected, (
+        f"BEAM judge prompt {name!r} has drifted:\n"
+        f"  expected: {expected}\n"
+        f"  actual:   {actual}\n"
+        "If this change is intentional, re-baseline per the docstring in this file."
+    )
+
+
+def test_beam_prompt_catalog_is_exactly_four() -> None:
+    """Guard against sneaking a new template in without a golden digest."""
+
+    assert set(BEAM_PROMPT_TEMPLATES) == set(_BEAM_GOLDEN)
+
+
+def test_beam_combined_fingerprint_is_locked() -> None:
+    assert BEAM_JUDGE_FINGERPRINT == _BEAM_COMBINED_GOLDEN
+
+
+def test_beam_templates_end_with_yes_or_no() -> None:
+    """All four BEAM templates close with an explicit yes/no question."""
+
+    for name, template in BEAM_PROMPT_TEMPLATES.items():
+        assert template.rstrip().endswith("Answer yes or no only."), name
+
+
+def test_beam_templates_have_three_placeholders() -> None:
+    for name, template in BEAM_PROMPT_TEMPLATES.items():
+        assert template.count("{}") == 3, (
+            f"{name!r} template has {template.count('{}')} placeholders, expected 3"
+        )
+
+
+def test_beam_bundle_fingerprint_differs_from_lme_and_locomo() -> None:
+    assert BEAM_JUDGE_FINGERPRINT != LME_JUDGE_FINGERPRINT
+    assert BEAM_JUDGE_FINGERPRINT != LOCOMO_JUDGE_FINGERPRINT
+
+
+def test_beam_templates_cover_four_distinct_shapes() -> None:
+    """Sanity: the four BEAM templates are byte-distinct — no accidental
+    copy-paste that would defeat ability-specific routing."""
+
+    templates = {
+        BEAM_GENERAL_TEMPLATE,
+        BEAM_TEMPORAL_TEMPLATE,
+        BEAM_EVENT_ORDERING_TEMPLATE,
+        BEAM_ABSTENTION_TEMPLATE,
+    }
+    assert len(templates) == 4

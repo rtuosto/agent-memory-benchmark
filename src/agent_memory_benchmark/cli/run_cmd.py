@@ -59,8 +59,8 @@ def _add_shared_run_arguments(
     parser.add_argument(
         "dataset",
         choices=("longmemeval", "locomo", "beam"),
-        help="Dataset name. longmemeval and locomo are wired; beam (PR-11) "
-        "raises DatasetUnavailableError until its loader lands.",
+        help="Dataset name. All three are wired; BEAM defaults to the "
+        "'beam' variant (128K-1M token conversations).",
     )
     if include_memory:
         parser.add_argument(
@@ -93,6 +93,24 @@ def _add_shared_run_arguments(
         "--limit-strategy",
         choices=("full", "stratified", "head"),
         default="stratified",
+    )
+    parser.add_argument(
+        "--variant",
+        choices=("beam", "beam-10m"),
+        default="beam",
+        help="BEAM variant: 'beam' (128K-1M token conversations) or "
+        "'beam-10m' (extended 10M-token conversations). Ignored for "
+        "longmemeval/locomo.",
+    )
+    parser.add_argument(
+        "--beam-revision",
+        help="Override the pinned HF revision for BEAM (default: module constant). "
+        "Publishable BEAM runs should pin an explicit commit SHA.",
+    )
+    parser.add_argument(
+        "--abilities",
+        help="Comma-separated BEAM ability filter (e.g. "
+        "'temporal-reasoning,abstention'). Ignored for longmemeval/locomo.",
     )
     if include_memory:
         parser.add_argument(
@@ -180,6 +198,7 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
     memory_spec = getattr(args, "memory", None) or "full-context"
     session_mapper = getattr(args, "session_mapper", None)
     result_mapper = getattr(args, "result_mapper", None)
+    beam_abilities = _parse_abilities(getattr(args, "abilities", None))
 
     try:
         run_dir = asyncio.run(
@@ -195,6 +214,9 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
                 data_path=args.data,
                 dataset_limit=args.limit,
                 dataset_limit_strategy=args.limit_strategy,
+                beam_variant=getattr(args, "variant", "beam"),
+                beam_revision=getattr(args, "beam_revision", None),
+                beam_abilities=beam_abilities,
                 memory_config=memory_config or None,
                 session_mapper_spec=session_mapper,
                 result_mapper_spec=result_mapper,
@@ -257,6 +279,22 @@ def _parse_memory_config(items: list[str]) -> dict[str, Any]:
     return config
 
 
+def _parse_abilities(raw: str | None) -> list[str] | None:
+    """Parse ``--abilities a,b,c`` into a list of ability names.
+
+    Whitespace is stripped around each entry; empty entries are dropped.
+    Returns ``None`` for a missing / empty value so the BEAM loader
+    applies no filter. Ability validation happens downstream in
+    :class:`BeamDataset` against :data:`CANONICAL_ABILITIES`.
+    """
+
+    if raw is None:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    cleaned = [p for p in parts if p]
+    return cleaned or None
+
+
 def _parse_memory_headers(items: list[str]) -> dict[str, str]:
     """Parse ``--memory-header NAME=VALUE`` entries into an HTTP headers dict.
 
@@ -293,6 +331,7 @@ def _render_summary(run_dir: Any) -> None:
 
 __all__ = [
     "_add_shared_run_arguments",
+    "_parse_abilities",
     "_parse_memory_headers",
     "_resolve_num_ctx",
     "add_run_subparser",
