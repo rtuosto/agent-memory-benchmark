@@ -96,9 +96,7 @@ def ingestion_key(
     Parts order matches the predecessor benchmark exactly.
     """
 
-    return hash_parts(
-        (memory_system_id, memory_version, dataset_descriptor_hash, case_id)
-    )
+    return hash_parts((memory_system_id, memory_version, dataset_descriptor_hash, case_id))
 
 
 def answer_key(
