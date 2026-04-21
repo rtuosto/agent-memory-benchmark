@@ -66,6 +66,7 @@ Binds to `127.0.0.1` only — no auth, local tool. What it does:
 - **Run detail** at `/runs/{id}` — KPI cards (overall / macro accuracy, throughput), a dedicated Ingestion section (total time + per-case mean/p95 + sessions/sec), and four Chart.js visualizations (per-category accuracy, per-query latency log scale, retrieval footprint log scale, evidence KPIs).
 - **Inline baseline comparison** — every run detail auto-picks the highest-accuracy run for the same benchmark as a baseline and renders deltas on every KPI card + overlays the baseline on every chart (warm palette = this run, cool palette = baseline). Dropdown at the top lets you pick a different baseline or disable comparison (`?baseline=none`).
 - **Compare table at the bottom** — the same diff `amb compare` prints on the CLI, rendered as HTML so it's readable in the browser.
+- **Jobs** at `/jobs` — launch new benchmark runs from a form and watch them progress. Local (Ollama) jobs submit immediately; any job with an `openai:<model>` answer or judge spec redirects to a cost-estimate confirm page first (pricing snapshot in `web/cost.py`). Job state (`queued`/`running`/`succeeded`/`failed`) is persisted under `jobs/<id>/` as `job.json` + `stdout.log` + `stderr.log`, so history survives server restarts. Concurrency cap defaults to 1 (`--max-concurrent`); extra submissions queue and promote FIFO as slots free up.
 
 No DB — the filesystem under `results/` is the source of truth. Reloads are cheap thanks to an mtime-keyed cache.
 

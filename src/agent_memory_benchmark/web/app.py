@@ -62,6 +62,8 @@ def create_app(config: WebConfig) -> FastAPI:
     from fastapi.templating import Jinja2Templates
 
     from .index import ResultIndex
+    from .jobs import JobManager
+    from .routes.jobs import build_router as build_jobs_router
     from .routes.runs import build_router as build_runs_router
 
     here = Path(__file__).parent
@@ -76,9 +78,13 @@ def create_app(config: WebConfig) -> FastAPI:
     app.state.config = config
     app.state.result_index = ResultIndex(config.results_dir)
     app.state.templates = templates
+    job_manager = JobManager(config.jobs_dir, max_concurrent=config.max_concurrent_jobs)
+    job_manager.reconcile()
+    app.state.job_manager = job_manager
 
     app.mount("/static", StaticFiles(directory=str(here / "static")), name="static")
     app.include_router(build_runs_router(templates))
+    app.include_router(build_jobs_router(templates))
 
     @app.get("/health")
     def health() -> dict[str, object]:

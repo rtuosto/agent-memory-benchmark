@@ -52,7 +52,7 @@ memory system.
 | `runner/` | Orchestrator, manifest, replicate driver, results directory management | `src/agent_memory_benchmark/runner/` |
 | `results/` | Scorecard aggregation + JSON/Markdown/rich rendering | `src/agent_memory_benchmark/results/` |
 | `cli/` | `amb` / `agent-memory-benchmark` subcommands | `src/agent_memory_benchmark/cli/` |
-| `web/` | FastAPI dashboard (`amb serve`) — browse runs, compare, visualize. Behind `[web]` extra so CLI users don't pay for fastapi/uvicorn | `src/agent_memory_benchmark/web/` |
+| `web/` | FastAPI dashboard (`amb serve`) — browse runs, compare, visualize, and launch jobs as subprocesses with filesystem-persisted state. Two-stage OpenAI cost-confirm flow. Behind `[web]` extra so CLI users don't pay for fastapi/uvicorn | `src/agent_memory_benchmark/web/` |
 
 ## Data flow
 
@@ -125,6 +125,12 @@ results/latest       # symlink / Windows junction to most recent run
 | Warm palette = current run; cool palette = baseline | Color conventions that tie to semantic quality (green = good, red = bad) break when "higher is better" flips between metrics (accuracy up vs latency down). Warm/cool avoids that trap — the color tells you *which run*, not *which is better*. The user reads the delta to know direction. | 2026-04-21 |
 | Latency chart excludes ingestion buckets | Ingestion is reported per case (~50s for LongMemEval), per-query latencies are reported per query (~5ms–3s). Mixing them on a shared log scale pinned the scale and hid the per-query signal. Ingestion has its own dedicated section on the detail page (cards + compare rows). | 2026-04-21 |
 | Chart data shaper coalesces `ingestion_per_session` → `ingestion_per_case` | When comparing a pre-rename run to a post-rename run, the baseline ingestion previously landed in a different bucket than the current run's ingestion, silently breaking ingestion comparison. The web-layer coalesce promotes the pre-rename key to the canonical post-rename key so both sides align. | 2026-04-21 |
+| Jobs launch `amb run` as a subprocess, not an in-process call | Running a benchmark in the same Python process as the dashboard would block the event loop for minutes to hours, conflate logs, and let a single OOM take the UI down with the job. Subprocess isolation is worth the restart-recovery cost (`JobManager.reconcile` marks detached children `orphaned`). | 2026-04-21 |
+| Job state persists under `jobs/<id>/job.json` — filesystem is truth | Mirrors the `results/` design: restarts shouldn't lose history. Atomic writes (temp + rename) keep the file readable during state transitions. The JSON is tiny so no DB is warranted. | 2026-04-21 |
+| Concurrency cap defaults to 1 | Most benchmarks saturate CPU/GPU; running two in parallel on a laptop makes both slower and less reliable. Queued submissions promote FIFO when a slot frees up. User can raise it via `--max-concurrent` if their hardware tolerates it. | 2026-04-21 |
+| OpenAI answer/judge specs trigger a two-stage confirm page | Any `openai:<model>` in the form re-renders the new-job page with a cost estimate (±30% band, per-role breakdown) and a hidden `confirmed=yes` field. Resubmitting with the field set bypasses the check. Protects the cost-conscious user from fat-fingering into a $400 BEAM run. | 2026-04-21 |
+| Cost estimator is coarse by design | Prices come from a pinned table (`web/cost.py::_PRICES`, snapshot `PRICE_TABLE_DATE`); dataset profiles budget rough `input_tokens_per_q` / `output_tokens_per_q` on the high side. The goal is to warn, not to predict the invoice. Unknown OpenAI models surface as `unknown_prices` rather than silently costing `$0`. | 2026-04-21 |
+| Job detail uses meta-refresh polling, not SSE | A 5-second `<meta http-equiv="refresh">` tag is one line of HTML and has zero server-side scheduling concerns. SSE arrives in a later step once log-line streaming is justified by user pull. | 2026-04-21 |
 
 ## External dependencies
 
