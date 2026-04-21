@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Runs — amb dashboard{% endblock %}
+{% block content %}
+<h1>Runs <span class="muted">({{ runs|length }})</span></h1>
+
+{% if not runs %}
+<p class="empty">No runs found under <code>{{ results_dir }}</code>.</p>
+{% else %}
+<table class="runs">
+    <thead>
+        <tr>
+            <th>When</th>
+            <th>Benchmark</th>
+            <th>Memory</th>
+            <th>Answer model</th>
+            <th class="num">N</th>
+            <th class="num">Overall</th>
+            <th class="num">Macro</th>
+            <th class="num">q/s</th>
+            <th>Tag</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for run in runs %}
+        <tr>
+            <td><a href="/runs/{{ run.run_id }}">{{ run.timestamp or run.run_id }}</a></td>
+            <td>{{ run.benchmark or "—" }}</td>
+            <td>
+                {{ run.memory_system_id or "—" }}
+                {% if run.memory_version %}<span class="muted">@{{ run.memory_version }}</span>{% endif %}
+            </td>
+            <td><code>{{ run.answer_model or "—" }}</code></td>
+            <td class="num">{{ run.n_questions if run.n_questions is not none else "—" }}</td>
+            <td class="num">{{ "%.2f%%"|format(run.overall_accuracy * 100) if run.overall_accuracy is not none else "—" }}</td>
+            <td class="num">{{ "%.2f%%"|format(run.macro_accuracy * 100) if run.macro_accuracy is not none else "—" }}</td>
+            <td class="num">{{ "%.3f"|format(run.throughput_qps) if run.throughput_qps is not none else "—" }}</td>
+            <td>{{ run.tag or "" }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

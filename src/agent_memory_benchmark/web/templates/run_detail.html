@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}{{ summary.run_id }} — amb dashboard{% endblock %}
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', path='/charts.js') }}" defer></script>
+{% endblock %}
+
+{% macro pct(value) %}{% if value is not none %}{{ "%.2f%%"|format(value * 100) }}{% else %}—{% endif %}{% endmacro %}
+{% macro pct_delta(value) %}{% if value is not none %}<span class="delta {% if value > 0 %}up{% elif value < 0 %}down{% endif %}">{{ "%+.2fpp"|format(value * 100) }}</span>{% endif %}{% endmacro %}
+{% macro ms(value) %}{% if value is not none %}{{ "%.1f"|format(value) }} ms{% else %}—{% endif %}{% endmacro %}
+{% macro ms_delta(value) %}{% if value is not none %}<span class="delta {% if value < 0 %}up{% elif value > 0 %}down{% endif %}">{{ "%+.1f"|format(value) }} ms</span>{% endif %}{% endmacro %}
+{% macro num(value, fmt="%.3f") %}{% if value is not none %}{{ fmt|format(value) }}{% else %}—{% endif %}{% endmacro %}
+{% macro num_delta(value, fmt="%+.3f", higher_better=true) %}{% if value is not none %}<span class="delta {% if (higher_better and value > 0) or (not higher_better and value < 0) %}up{% elif value != 0 %}down{% endif %}">{{ fmt|format(value) }}</span>{% endif %}{% endmacro %}
+
+{% block content %}
+<p><a href="/runs">← Runs</a></p>
+<h1>{{ summary.run_id }}</h1>
+
+<section class="meta-grid">
+    <div><strong>Benchmark:</strong> {{ summary.benchmark or "—" }}</div>
+    <div><strong>Memory:</strong>
+        {{ summary.memory_system_id or "—" }}{% if summary.memory_version %}@{{ summary.memory_version }}{% endif %}
+    </div>
+    <div><strong>Answer model:</strong> <code>{{ summary.answer_model or "—" }}</code></div>
+    <div><strong>Judge model:</strong> <code>{{ summary.judge_model or "—" }}</code></div>
+    <div><strong>Questions:</strong> {{ summary.n_questions if summary.n_questions is not none else "—" }}</div>
+    <div><strong>When:</strong> {{ summary.timestamp or "—" }}</div>
+    {% if summary.tag %}<div><strong>Tag:</strong> {{ summary.tag }}</div>{% endif %}
+</section>
+
+{% if candidates %}
+<section class="baseline-picker">
+    <form method="get" action="/runs/{{ summary.run_id }}">
+        <label for="baseline"><strong>Compare to baseline:</strong></label>
+        <select name="baseline" id="baseline" onchange="this.form.submit()">
+            <option value="" {% if baseline_mode == "auto" and baseline_summary %}selected{% endif %}>
+                Best known ({{ baseline_summary.run_id if baseline_summary else "—" }})
+            </option>
+            <option value="none" {% if baseline_mode == "none" %}selected{% endif %}>None</option>
+            <optgroup label="Specific run">
+            {% for candidate in candidates %}
+                <option value="{{ candidate.run_id }}"
+                    {% if baseline_mode == "manual" and baseline_summary and baseline_summary.run_id == candidate.run_id %}selected{% endif %}>
+                    {{ candidate.run_id }}
+                    {% if candidate.overall_accuracy is not none %} — {{ "%.2f%%"|format(candidate.overall_accuracy * 100) }}{% endif %}
+                </option>
+            {% endfor %}
+            </optgroup>
+        </select>
+        <noscript><button type="submit">Apply</button></noscript>
+    </form>
+    {% if baseline_summary and baseline_mode != "none" %}
+        <div class="baseline-summary">
+            vs. <a href="/runs/{{ baseline_summary.run_id }}">{{ baseline_summary.run_id }}</a>
+            ({{ baseline_summary.memory_system_id or "?" }}@{{ baseline_summary.memory_version or "?" }},
+            overall {{ pct(baseline_summary.overall_accuracy) }})
+        </div>
+    {% endif %}
+</section>
+{% endif %}
+
+<section class="kpi-row">
+    <div class="kpi">
+        <div class="kpi-label">Overall accuracy</div>
+        <div class="kpi-value">{{ pct(summary.overall_accuracy) }}</div>
+        {% if compare %}{% set row = compare.quality.rows | selectattr("label", "equalto", "overall_accuracy") | first %}
+            {% if row %}{{ pct_delta(row.delta) }}{% endif %}
+        {% endif %}
+    </div>
+    <div class="kpi">
+        <div class="kpi-label">Macro accuracy</div>
+        <div class="kpi-value">{{ pct(summary.macro_accuracy) }}</div>
+        {% if compare %}{% set row = compare.quality.rows | selectattr("label", "equalto", "macro_accuracy") | first %}
+            {% if row %}{{ pct_delta(row.delta) }}{% endif %}
+        {% endif %}
+    </div>
+    <div class="kpi">
+        <div class="kpi-label">Throughput</div>
+        <div class="kpi-value">{{ num(summary.throughput_qps) }} <span class="muted">q/s</span></div>
+        {% if compare %}{% set row = compare.throughput.rows | selectattr("label", "equalto", "queries_per_sec") | first %}
+            {% if row %}{{ num_delta(row.delta) }}{% endif %}
+        {% endif %}
+    </div>
+</section>
+
+{# ---------- Ingestion ---------- #}
+{% set latency = scorecard.get("latency_ms", {}) %}
+{% set ingest_per_case = latency.get("ingestion_per_case") or latency.get("ingestion_per_session") %}
+{% set ingest_total = latency.get("ingestion_total") if latency.get("ingestion_total") is not none else latency.get("ingestion_total_ms") %}
+{% set throughput = scorecard.get("throughput", {}) %}
+{% if ingest_per_case or ingest_total or throughput.get("sessions_per_sec") %}
+<section>
+    <h2>Ingestion</h2>
+    <div class="kpi-row">
+        <div class="kpi">
+            <div class="kpi-label">Ingest total</div>
+            <div class="kpi-value">
+                {% if ingest_total is not none %}{{ "%.1f"|format(ingest_total / 1000) }} <span class="muted">s</span>{% else %}—{% endif %}
+            </div>
+            {% if compare %}{% set row = compare.ingestion.rows | selectattr("label", "equalto", "ingestion_total_ms") | first %}
+                {% if row %}{{ ms_delta(row.delta) }}{% endif %}
+            {% endif %}
+        </div>
+        <div class="kpi">
+            <div class="kpi-label">Per-case mean</div>
+            <div class="kpi-value">
+                {% if ingest_per_case and ingest_per_case.get("mean") is not none %}
+                    {{ "%.1f"|format(ingest_per_case.get("mean") / 1000) }} <span class="muted">s</span>
+                {% else %}—{% endif %}
+            </div>
+            {% if compare %}{% set row = compare.ingestion.rows | selectattr("label", "equalto", "ingestion_per_case_mean") | first %}
+                {% if row %}{{ ms_delta(row.delta) }}{% endif %}
+            {% endif %}
+        </div>
+        <div class="kpi">
+            <div class="kpi-label">Per-case p95</div>
+            <div class="kpi-value">
+                {% if ingest_per_case and ingest_per_case.get("p95") is not none %}
+                    {{ "%.1f"|format(ingest_per_case.get("p95") / 1000) }} <span class="muted">s</span>
+                {% else %}—{% endif %}
+            </div>
+            {% if compare %}{% set row = compare.ingestion.rows | selectattr("label", "equalto", "ingestion_per_case_p95") | first %}
+                {% if row %}{{ ms_delta(row.delta) }}{% endif %}
+            {% endif %}
+        </div>
+        <div class="kpi">
+            <div class="kpi-label">Sessions / sec</div>
+            <div class="kpi-value">{{ num(throughput.get("sessions_per_sec")) }}</div>
+            {% if compare %}{% set row = compare.ingestion.rows | selectattr("label", "equalto", "sessions_per_sec") | first %}
+                {% if row %}{{ num_delta(row.delta) }}{% endif %}
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{# ---------- Charts ---------- #}
+{% set quality = scorecard.get("quality", {}) %}
+{% set per_category = quality.get("per_category", {}) %}
+{% if per_category %}
+<section>
+    <h2>Per-category quality</h2>
+    <div class="chart-box tall"><canvas id="chart-per-category"></canvas></div>
+</section>
+{% endif %}
+
+{% if latency %}
+<section>
+    <h2>Latency (ms, log scale)</h2>
+    <div class="chart-box tall"><canvas id="chart-latency"></canvas></div>
+</section>
+{% endif %}
+
+{% set footprint = scorecard.get("retrieval_footprint", {}) %}
+{% if footprint %}
+<section>
+    <h2>Retrieval footprint</h2>
+    <div class="chart-box"><canvas id="chart-footprint"></canvas></div>
+</section>
+{% endif %}
+
+{% set evidence = scorecard.get("evidence", {}) %}
+{% if evidence %}
+<section>
+    <h2>Evidence KPIs</h2>
+    <div class="chart-box"><canvas id="chart-evidence"></canvas></div>
+</section>
+{% endif %}
+
+{# ---------- Compare table (when baseline selected) ---------- #}
+{% if compare %}
+<section>
+    <h2>vs. baseline ({{ compare.a_label }})</h2>
+    {% if not compare.benchmarks_match %}
+    <p class="warn">⚠ Benchmarks differ: A={{ compare.a_benchmark }}, B={{ compare.b_benchmark }}</p>
+    {% endif %}
+    {% for section in compare.sections %}
+        {% if section.non_empty %}
+        <h3>{{ section.title }}</h3>
+        <table>
+            <thead><tr><th>Metric</th><th class="num">A (baseline)</th><th class="num">B (this run)</th><th class="num">Δ</th></tr></thead>
+            <tbody>
+            {% for row in section.rows %}
+            <tr>
+                <td>{{ row.label }}</td>
+                {% if row.unit == "pct" %}
+                    <td class="num">{{ pct(row.a) }}</td>
+                    <td class="num">{{ pct(row.b) }}</td>
+                    <td class="num">{{ pct_delta(row.delta) }}</td>
+                {% elif row.unit == "ms" %}
+                    <td class="num">{{ ms(row.a) }}</td>
+                    <td class="num">{{ ms(row.b) }}</td>
+                    <td class="num">{{ ms_delta(row.delta) }}</td>
+                {% else %}
+                    <td class="num">{{ num(row.a) }}</td>
+                    <td class="num">{{ num(row.b) }}</td>
+                    <td class="num">{{ num_delta(row.delta) }}</td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    {% endfor %}
+</section>
+{% endif %}
+
+{% if scorecard_md %}
+<section>
+    <h2>scorecard.md</h2>
+    <pre class="raw-md">{{ scorecard_md }}</pre>
+</section>
+{% endif %}
+
+<section class="actions">
+    <a href="/runs/{{ summary.run_id }}/scorecard.json">Raw scorecard.json</a>
+    <a href="/runs/{{ summary.run_id }}/meta.json">Raw meta.json</a>
+</section>
+
+<script id="chart-data" type="application/json">{{ chart_data_json | safe }}</script>
+{% endblock %}

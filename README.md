@@ -49,7 +49,25 @@ amb run beam \
     --limit 20
 ```
 
-`amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`). BEAM variant / split / ability filter semantics are documented in [`docs/beam.md`](docs/beam.md).
+`amb --help` enumerates the subcommands (`run`, `baseline`, `rejudge`, `compare`, `summarize`, `cache`, `serve`). BEAM variant / split / ability filter semantics are documented in [`docs/beam.md`](docs/beam.md).
+
+### Web dashboard (`amb serve`)
+
+Optional local dashboard for browsing runs, comparing scorecards, and visualizing KPIs. Install the extra first:
+
+```bash
+pip install -e ".[web]"
+amb serve --port 8000 --results-dir results
+```
+
+Binds to `127.0.0.1` only — no auth, local tool. What it does:
+
+- **Runs list** at `/runs` — sortable table of every run under `results/`, one row per `<timestamp>_<benchmark>_<memory>_<model>_<tag>/` directory.
+- **Run detail** at `/runs/{id}` — KPI cards (overall / macro accuracy, throughput), a dedicated Ingestion section (total time + per-case mean/p95 + sessions/sec), and four Chart.js visualizations (per-category accuracy, per-query latency log scale, retrieval footprint log scale, evidence KPIs).
+- **Inline baseline comparison** — every run detail auto-picks the highest-accuracy run for the same benchmark as a baseline and renders deltas on every KPI card + overlays the baseline on every chart (warm palette = this run, cool palette = baseline). Dropdown at the top lets you pick a different baseline or disable comparison (`?baseline=none`).
+- **Compare table at the bottom** — the same diff `amb compare` prints on the CLI, rendered as HTML so it's readable in the browser.
+
+No DB — the filesystem under `results/` is the source of truth. Reloads are cheap thanks to an mtime-keyed cache.
 
 Service authors who want to be benchmarkable over the network implement the
 four required endpoints documented in [`docs/http-api.md`](docs/http-api.md)

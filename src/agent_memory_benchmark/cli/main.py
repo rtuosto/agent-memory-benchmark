@@ -14,6 +14,7 @@ from .cache_cmd import add_cache_subparser, cache_command
 from .compare_cmd import add_compare_subparser, compare_command
 from .rejudge_cmd import add_rejudge_subparser, rejudge_command
 from .run_cmd import add_run_subparser, run_command
+from .serve_cmd import add_serve_subparser, serve_command
 from .summarize_cmd import add_summarize_subparser, summarize_command
 
 
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_compare_subparser(subparsers)
     add_summarize_subparser(subparsers)
     add_cache_subparser(subparsers)
+    add_serve_subparser(subparsers)
     return parser
 
 
@@ -60,6 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "compare": compare_command,
         "summarize": summarize_command,
         "cache": cache_command,
+        "serve": serve_command,
     }
     handler = dispatch.get(args.command)
     if handler is None:
