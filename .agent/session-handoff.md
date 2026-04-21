@@ -5,6 +5,80 @@
 
 ---
 
+## Session: 2026-04-20 — PR-10 HTTP adapter + openapi.yaml + docs/http-api.md
+
+### What Was Done
+
+**PR-10 (on `feat/http-adapter`, branched from `main` after PR-9 merged):** landed the third transport so a memory system running as a remote REST service can be benchmarked end-to-end.
+
+- `adapters/http_adapter.py` — `HttpAdapter` + `HttpAdapterError`. Construction does NOT hit the network (keeps `resolve_adapter` assembly-time pure); `await adapter.open()` or the `HttpAdapter.connect(...)` async factory fetches `GET /v1/identity`, populates `memory_system_id` / `memory_version`, and records the optional `supports_persistence` flag. All three abstract methods (`ingest_session` / `answer_question` / `reset`) refuse to fire before `open()` — a misconfigured service fails loud, not halfway through ingestion. `save_state` / `load_state` shuttle opaque bytes via `GET/PUT /v1/state` and hard-raise `NotImplementedError` when the remote service advertises `supports_persistence=false`; the adapter overrides `supports_persistence` as a property that reflects the remote flag instead of base-class reflection. JSON decode failures, non-2xx responses, and `httpx.HTTPError` all surface as `HttpAdapterError` with `status_code` populated where meaningful.
+- `adapters/factory.py` — `resolve_adapter` now routes `http://` / `https://` to `HttpAdapter` instead of raising the PR-10 placeholder. Accepts a new `http_headers` kwarg (passed through to the adapter). Cross-kind guardrails symmetric with the existing mapper rules: `--memory-config` rejected for http specs, `--memory-header` rejected for full-context and python specs.
+- `adapters/__init__.py` — re-exports `HttpAdapter` + `HttpAdapterError`; module docstring updated so the HTTP row no longer says "PR-10".
+- `runner/__init__.py` — `run_benchmark(...)` gained `http_headers` kwarg, threads it into `resolve_adapter`. New post-resolve block calls `adapter.open()` if the adapter exposes it (duck-typed via `getattr` so PythonAdapter / FullContextAdapter are unaffected). Identity populates BEFORE the manifest is constructed so `memory_system_id` / `memory_version` flow into the run-dir name and cache keys.
+- `cli/run_cmd.py` — new `--memory-header NAME=VALUE` repeating flag (values pass through verbatim; no JSON coercion, otherwise bearer tokens with `=` in them get mangled). New `_parse_memory_headers` helper; added to `__all__`. `run_command` parses headers into a dict and passes `http_headers=memory_headers or None` to `run_benchmark`.
+- `cli/baseline_cmd.py` — fills `args.memory_header = []` alongside the other absent flags so baseline's argparse namespace stays complete.
+- `openapi.yaml` (new, repo root) — OpenAPI 3.0.3 contract for the four required endpoints (`GET /v1/identity`, `POST /v1/ingest`, `POST /v1/answer`, `POST /v1/reset`) plus the two optional persistence endpoints (`GET/PUT /v1/state`). Schemas for `Turn`, `Session`, `IngestRequest`, `AnswerRequest`, `RetrievedUnit`, `AnswerResponse`, `Ack`, `Error`. Example payloads inline.
+- `docs/http-api.md` (new) — narrative reference for service authors: endpoint-by-endpoint walkthrough, headers/auth, timing expectations, versioning, a callout that `retrieved[*].text` is load-bearing for evidence KPIs (empty retrieval silently zeroes them).
+- `README.md` — adds an HTTP quickstart block + a one-liner pointing service authors at `docs/http-api.md` / `openapi.yaml`.
+- `docs/ARCHITECTURE.md` — two new rows in the key-decisions table: (a) why identity fetches at `open()` not lazily, (b) why state is opaque bytes.
+
+**Tests (32 new; 458 passed + 1 skipped):**
+- `test_http_adapter.py` — 23 respx-backed tests covering: construction is network-free; `open` populates identity and persistence flag; `open` rejects missing/invalid identity; ops-before-open fail loud; `ingest` sends the right JSON (nullable fields present as null, trailing slashes stripped, 204 accepted); ingest error surface with status_code; `answer` round-trips full `AnswerResult` including `retrieved[*]` with score/source_turn_ids, minimal payload ok, missing/non-string `answer` rejected; `reset` posts empty body; transport error → `HttpAdapterError`; headers forwarded on every request; non-JSON body rejected; persistence `NotImplementedError` when service refuses; state snapshot round-trip writes/reads `state.bin`; context-manager opens+closes; empty base URL rejected; owned-client close idempotent; external client NOT closed by adapter.
+- `test_adapters_factory.py` — replaces the "PR-10 reserved" test with new coverage: http spec returns `HttpAdapter`, https variant too, headers forward, cross-kind guardrails (http rejects config/mappers, non-http rejects `http_headers`).
+- `test_cli_run_cmd.py` — new coverage for `_parse_memory_headers` (verbatim values incl. `=` in tokens, missing `=` rejected, empty name rejected) + parser captures `--memory-header` as a repeating list.
+
+**Invocation (the payoff):**
+
+```bash
+amb run longmemeval \
+    --memory http://localhost:8000 \
+    --memory-header Authorization="Bearer ${TOKEN}" \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+```
+
+### Current State
+
+- Branch: `feat/http-adapter`. HEAD commit pending (see below — commit after this write).
+- Tests: 458 passed (up from 426), 1 skipped (POSIX-only symlink).
+- Lint: `ruff check src tests` → clean.
+- Format: `ruff format --check` → 81 files already formatted (auto-fixed during development; committed reformat on `http_adapter.py`, `factory.py`, `test_http_adapter.py`).
+- Types: `mypy src` → clean on 44 source files.
+
+### What's Next
+
+- Merge `feat/http-adapter` to `main` with `--no-ff` following the established pattern.
+- **PR-11** — BEAM loader + ability-specific judge prompts. `build_benchmark_judge` drops its `NotImplementedError` branch for `"beam"`; dataset dispatcher gets a `"beam"` arm with HF revision pin.
+- **PR-12** — noise-aware replicates + `--publishable` gate + `docs/methodology.md`.
+- **PR-13** — integration tests with recorded HTTP fixtures for all three benchmarks × all three adapters.
+
+### Open Questions
+
+- **HTTP protocol versioning.** `/v1/identity` reports `protocol_version`; `HttpAdapter.open` reads it but does NOT yet enforce compatibility. A later PR can add a strict-match check once there's a real v0.2 to diverge from — today, rejecting mismatched versions would block users whose services omit the field entirely, which is worse than the current laissez-faire pass-through.
+- **HTTP streaming for very large state blobs.** `save_state` / `load_state` load the full payload into memory (both `resp.content` and `write_bytes`). Fine for v0.1 — a memory system with gigabyte state can stream via `httpx.AsyncClient.stream(...)` in a follow-up.
+- **Per-request retry policy for HttpAdapter.** Currently any transport error aborts the run. Likely fine — LLM provider retries are handled in `JudgeClient`, but adapter-side retries interact with the benchmark's ingestion-cache semantics (re-sending an idempotently-committed ingest could duplicate state). Deferred until a real service asks for it.
+
+### Gotchas
+
+- **`HttpAdapter` identity must be fetched before the manifest is built.** `run_benchmark` now calls `adapter.open()` via duck-typing (`getattr(adapter, "open", None)`) right after `resolve_adapter`, before reading `adapter.memory_system_id` / `memory_version` into the manifest and run-dir name. If a future adapter grows an `open` method with different semantics, this duck-typed hop will call it — consider promoting `open` to the `MemoryAdapter` ABC with a default no-op body if a second adapter needs async initialization.
+- **`--memory-header` values pass through verbatim.** They are NOT JSON-coerced — unlike `--memory-config` — because a bearer token containing `=` or braces would otherwise be mangled. Tests lock this behavior (`test_parse_memory_headers_passes_values_verbatim`).
+- **Remote `supports_persistence=false` makes `save_state` raise loudly.** `HttpAdapter.supports_persistence` is a property that reflects the remote flag rather than the base-class reflection (which would always be True because the methods are defined). The runner's `supports_persistence` check therefore gates ingestion-cache writes correctly without round-tripping to the service.
+- **`retrieved[*].text` is load-bearing for evidence KPIs.** A service that returns `retrieved: []` on `/v1/answer` will zero out all evidence metrics for that question — that's correct behavior but surprising if you thought self-reporting `source_turn_ids` alone would be enough. `docs/http-api.md` calls this out explicitly.
+- **No openapi.yaml validation in CI yet.** `openapi.yaml` is hand-written and not round-tripped through a schema validator. If a future PR edits the spec, eyeball it against `HttpAdapter` or add a cheap validator step in CI.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main
+# Start PR-11: BEAM loader + ability-specific judge prompts.
+git checkout -b feat/beam
+```
+
+---
+
 ## Session: 2026-04-20 — PR-9 LOCOMO loader + judge (10-run majority)
 
 ### What Was Done

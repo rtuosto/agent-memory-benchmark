@@ -8,14 +8,15 @@ subclass knows how to reach a specific transport:
   ``agent_memory_benchmark.compat.MemorySystemShape``.
 - :class:`FullContextAdapter` — reference "null memory" baseline that
   concatenates every ingested turn into the prompt.
-- *HttpAdapter* — lands in PR-10.
+- :class:`HttpAdapter` — speaks the REST contract documented in
+  ``openapi.yaml`` / ``docs/http-api.md``.
 
 The :func:`resolve_adapter` factory maps a CLI ``--memory`` string to a
 concrete adapter. Grammar::
 
     full-context                             -> FullContextAdapter
     python:pkg.module:ClassName              -> PythonAdapter
-    http://host:port                         -> HttpAdapter (PR-10)
+    http(s)://host:port                      -> HttpAdapter
 """
 
 from __future__ import annotations
@@ -23,11 +24,14 @@ from __future__ import annotations
 from .base import MemoryAdapter
 from .factory import AdapterSpecError, resolve_adapter
 from .full_context import FullContextAdapter
+from .http_adapter import HttpAdapter, HttpAdapterError
 from .python_adapter import PythonAdapter
 
 __all__ = [
     "AdapterSpecError",
     "FullContextAdapter",
+    "HttpAdapter",
+    "HttpAdapterError",
     "MemoryAdapter",
     "PythonAdapter",
     "resolve_adapter",

@@ -41,6 +41,7 @@ def baseline_command(args: argparse.Namespace, *, argv: list[str] | None = None)
     # this robust if someone adds the flags to baseline in the future.
     args.memory = "full-context"
     args.memory_config = []
+    args.memory_header = []
     args.session_mapper = None
     args.result_mapper = None
     return run_command(args, argv=argv)

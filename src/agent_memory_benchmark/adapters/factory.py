@@ -6,12 +6,10 @@ directly from the command line::
 
     full-context                 -> FullContextAdapter
     python:pkg.module:ClassName  -> PythonAdapter
-    http://host:port             -> HttpAdapter (PR-10)
+    http(s)://host:port          -> HttpAdapter
 
 The factory is separated from ``__init__`` so importing an adapter does
-not force the entire package to load (e.g., importing
-:class:`FullContextAdapter` on its own does not pull the ``httpx``-backed
-HTTP adapter once that lands in PR-10).
+not force the entire package to load.
 """
 
 from __future__ import annotations
@@ -21,6 +19,7 @@ from typing import Any
 from ..llm import LLMProvider
 from .base import MemoryAdapter
 from .full_context import FullContextAdapter
+from .http_adapter import HttpAdapter
 from .python_adapter import PythonAdapter, ResultMapper, SessionMapper
 
 
@@ -35,6 +34,7 @@ def resolve_adapter(
     answer_provider: LLMProvider | None = None,
     session_mapper: SessionMapper | None = None,
     result_mapper: ResultMapper | None = None,
+    http_headers: dict[str, str] | None = None,
 ) -> MemoryAdapter:
     """Resolve a ``--memory`` spec string to a concrete :class:`MemoryAdapter`.
 
@@ -47,6 +47,12 @@ def resolve_adapter(
     :class:`PythonAdapter` for boundary type translation; both are
     no-ops for the other adapter kinds (passing them is an error if
     ``kind != "python"`` so misconfigurations surface early).
+
+    ``http_headers`` forward to :class:`HttpAdapter`; passing it with a
+    non-``http*`` spec is an error for the same symmetry reason as the
+    mapper kwargs above. The returned :class:`HttpAdapter` has NOT yet
+    called :meth:`HttpAdapter.open`; the runner must do so before the
+    first ingest call so identity flows into cache keys.
     """
 
     if not isinstance(spec, str) or not spec.strip():
@@ -54,9 +60,16 @@ def resolve_adapter(
     spec = spec.strip()
 
     if spec.startswith("http://") or spec.startswith("https://"):
-        raise AdapterSpecError(
-            "HTTP adapter lands in PR-10. Use 'full-context' or 'python:...' for now."
-        )
+        if config:
+            raise AdapterSpecError(
+                "--memory-config is only valid for python adapters; the HTTP "
+                "adapter configures the remote service via headers, not ctor kwargs."
+            )
+        if session_mapper is not None or result_mapper is not None:
+            raise AdapterSpecError(
+                "session_mapper / result_mapper are only valid for python adapters."
+            )
+        return HttpAdapter(spec, headers=http_headers)
 
     kind, _, target = spec.partition(":")
     kind = kind.strip().lower()
@@ -71,11 +84,15 @@ def resolve_adapter(
                 "session_mapper / result_mapper are only valid for python adapters; "
                 "full-context has no target type to translate."
             )
+        if http_headers is not None:
+            raise AdapterSpecError("--memory-header is only valid for http adapters.")
         return FullContextAdapter(answer_provider)
 
     if kind == "python":
         if not target:
             raise AdapterSpecError("python adapter needs a target: python:pkg.module:ClassName")
+        if http_headers is not None:
+            raise AdapterSpecError("--memory-header is only valid for http adapters.")
         return PythonAdapter.from_spec(
             target,
             config=config,
@@ -84,7 +101,8 @@ def resolve_adapter(
         )
 
     raise AdapterSpecError(
-        f"Unknown adapter kind {kind!r} in spec {spec!r}; supported: 'full-context', 'python:...'."
+        f"Unknown adapter kind {kind!r} in spec {spec!r}; "
+        "supported: 'full-context', 'python:...', 'http(s)://...'."
     )
 
 

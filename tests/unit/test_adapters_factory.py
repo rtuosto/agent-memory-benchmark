@@ -9,6 +9,7 @@ import pytest
 
 from agent_memory_benchmark.adapters.factory import AdapterSpecError, resolve_adapter
 from agent_memory_benchmark.adapters.full_context import FullContextAdapter
+from agent_memory_benchmark.adapters.http_adapter import HttpAdapter
 from agent_memory_benchmark.adapters.python_adapter import PythonAdapter
 from agent_memory_benchmark.llm import ChatResult
 from agent_memory_benchmark.types import AnswerResult, Session
@@ -87,9 +88,49 @@ def test_python_spec_missing_target_errors() -> None:
         resolve_adapter("python:")
 
 
-def test_http_is_reserved_for_pr10() -> None:
-    with pytest.raises(AdapterSpecError, match="PR-10"):
-        resolve_adapter("http://localhost:8000")
+def test_http_spec_returns_http_adapter() -> None:
+    adapter = resolve_adapter("http://localhost:8000")
+    assert isinstance(adapter, HttpAdapter)
+
+
+def test_https_spec_returns_http_adapter() -> None:
+    adapter = resolve_adapter("https://mem.example.com:443")
+    assert isinstance(adapter, HttpAdapter)
+
+
+def test_http_spec_forwards_headers() -> None:
+    headers = {"Authorization": "Bearer TOKEN"}
+    adapter = resolve_adapter("http://localhost:8000", http_headers=headers)
+    assert isinstance(adapter, HttpAdapter)
+    # Internal state check is acceptable here — the factory has no other
+    # observable surface for headers until the adapter is opened.
+    assert adapter._headers == headers  # noqa: SLF001 (intentional)
+
+
+def test_http_spec_rejects_python_config() -> None:
+    with pytest.raises(AdapterSpecError, match="only valid for python adapters"):
+        resolve_adapter("http://localhost:8000", config={"foo": "bar"})
+
+
+def test_http_spec_rejects_mappers() -> None:
+    with pytest.raises(AdapterSpecError, match="only valid for python adapters"):
+        resolve_adapter("http://localhost:8000", session_mapper=lambda s: s)
+
+
+def test_non_http_spec_rejects_http_headers(
+    plantable_module: types.ModuleType,
+) -> None:
+    with pytest.raises(AdapterSpecError, match="--memory-header"):
+        resolve_adapter(
+            f"python:{_MODULE}:GoodTarget",
+            http_headers={"Authorization": "x"},
+        )
+    with pytest.raises(AdapterSpecError, match="--memory-header"):
+        resolve_adapter(
+            "full-context",
+            answer_provider=_FakeProvider(),
+            http_headers={"Authorization": "x"},
+        )
 
 
 @pytest.mark.parametrize("bad", ["", "   ", "   :   "])

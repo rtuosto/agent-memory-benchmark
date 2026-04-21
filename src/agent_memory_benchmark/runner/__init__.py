@@ -71,6 +71,7 @@ async def run_benchmark(
     memory_config: dict[str, Any] | None = None,
     session_mapper_spec: str | None = None,
     result_mapper_spec: str | None = None,
+    http_headers: dict[str, str] | None = None,
     results_base: Path = Path("results"),
     cache_root: Path = Path("cache"),
     tag: str | None = None,
@@ -137,7 +138,17 @@ async def run_benchmark(
         answer_provider=answer_provider,
         session_mapper=session_mapper,
         result_mapper=result_mapper,
+        http_headers=http_headers,
     )
+
+    # HttpAdapter populates identity asynchronously via /v1/identity; open
+    # it here so memory_system_id / memory_version are live before the
+    # manifest reads them (they flow into cache keys + run dir name).
+    adapter_open = getattr(adapter, "open", None)
+    if callable(adapter_open):
+        result = adapter_open()
+        if hasattr(result, "__await__"):
+            await result
 
     answer_resolved = await answer_provider.resolve_spec()
     judge_resolved = await judge_provider.resolve_spec()

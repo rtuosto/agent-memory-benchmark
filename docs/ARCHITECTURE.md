@@ -106,6 +106,8 @@ results/latest       # symlink / Windows junction to most recent run
 | Runner-measured + adapter-reported timings both stored | Discrepancy is a telemetry-drift signal | 2026-04-20 |
 | `BenchmarkJudge.prompt_fingerprint(qa)` on the Protocol | Lets the orchestrator compute judge cache keys without knowing which template a benchmark will select; added when LOCOMO landed a second judge with different routing rules than LongMemEval | 2026-04-20 |
 | LOCOMO QA category 5 filtered at load, not at scoring | Keeps `len(dataset)` == scorable count; cache keys stay one-dimensional. Matches predecessor. | 2026-04-20 |
+| HTTP adapter identity fetched at `open()`, not lazily | `memory_system_id` / `memory_version` flow into cache keys and the run-dir name, so they must be live before the first ingest. Fetching at `open()` (called once in `run_benchmark` before manifest construction) fails loud on a misconfigured service instead of producing a run keyed on placeholder identity. | 2026-04-20 |
+| HTTP state snapshot is opaque bytes (`GET/PUT /v1/state`) | The benchmark has no business parsing a memory system's internal state. Ferrying bytes verbatim means services keep total schema autonomy and the adapter stays tiny. | 2026-04-20 |
 
 ## External dependencies
 
