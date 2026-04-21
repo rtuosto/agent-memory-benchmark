@@ -5,6 +5,56 @@
 
 ---
 
+## Session: 2026-04-20 — PR-5 adapters
+
+### What Was Done
+
+**PR-5 adapters (on `feat/adapters`, branched from `main` after the PR-4 merge):**
+
+- `src/agent_memory_benchmark/adapters/base.py` — `MemoryAdapter` ABC. Sets `memory_system_id` / `memory_version` on subclasses, declares the three abstract async methods (`ingest_session` / `answer_question` / `reset`), and provides default-raising `save_state` / `load_state`. `supports_persistence` is reflection-based (compares the subclass's method objects against the base defaults) so override detection is automatic. `__aexit__` routes through `close()`.
+- `adapters/full_context.py` — `FullContextAdapter`. Null-memory baseline: concatenates every ingested turn into the prompt at answer time, emits turn count as `units_retrieved` and a whitespace-token estimate as `tokens_retrieved`, returns an empty `retrieved` tuple. Persistence implemented by JSON-serializing the `{case_id -> [Session]}` dict — the runner can exercise the ingestion cache path even for the baseline.
+- `adapters/python_adapter.py` — `PythonAdapter`. Loads `"pkg.module:ClassName"`, instantiates with `--memory-config` kwargs, structurally checks via `isinstance(instance, MemorySystemShape)`. When the check fails, `_describe_missing_shape` emits a targeted "missing attribute/method" diagnostic rather than a bare `isinstance False`. Accepts optional `session_mapper` / `result_mapper` callables (plan option b) so divergent target type shapes bridge without subclassing. Persistence delegates iff the target exposes `save_state` / `load_state`.
+- `adapters/factory.py` — `resolve_adapter`. Maps CLI `--memory` to a concrete adapter: `"full-context"` and `"full-context:"` both work; `"python:pkg.module:Class"`; `http://` is reserved with a clear "PR-10" error.
+
+**Tests (47 new; 148 total):** `test_adapters_base.py`, `test_adapters_full_context.py`, `test_adapters_python.py` (incl. module-planting fixture for `from_spec`), `test_adapters_factory.py`.
+
+Also: a small `style(cache)` commit reflowing two already-merged files to match ruff format (one-line calls that fit within 100 cols).
+
+### Current State
+
+- Branch: `feat/adapters` (not yet merged). Head: `style(cache): reflow one-line calls to match ruff format`, built atop `feat(adapters): MemoryAdapter ABC + PythonAdapter + FullContextAdapter`.
+- Tests: `pytest` → 148 passed.
+- Lint: `ruff check`, `ruff format --check` → clean.
+- Types: `mypy src` → clean (20 source files).
+
+### What's Next
+
+- **PR-6** — LongMemEval loader + judge prompts + byte-stable prompt-fingerprint test. Loader ports from `~/code/agent-memory/benchmark/datasets/longmemeval.py` but factors out the HF revision pin. Judge prompts live in `judge/longmemeval.py` + `judge/prompts.py`; fingerprints locked by `test_judge_prompts_stable.py`.
+- **PR-7** — Runner + manifest + scorecard. First end-to-end demo will wire `FullContextAdapter` + `OllamaProvider` + `JudgeClient` + LongMemEval loader together.
+
+### Open Questions
+
+- **Type translation strategy locked.** `PythonAdapter` accepts optional `session_mapper` / `result_mapper` kwargs; default is identity (pass-through). Resolves plan open-question #7.
+- Still open: BEAM evidence-turn field name (PR-11); Ollama-digest-in-manifest timing decision (plan open-question #3) will be finalized when PR-7 wires `provider.resolve_spec()` through the runner.
+
+### Gotchas
+
+- **`MemorySystemShape` structural check skips async-ness.** `Protocol` `isinstance` validates attribute *presence*, not callability signature. `PythonAdapter._describe_missing_shape` checks `callable(...)` as a best-effort extra, but adapters still need to assume targets were written to the documented contract; a sync `def ingest_session` would pass the structural check and fail at `await`. Documented in `docs/compat.md`.
+- **`Protocol.isinstance` vs. `runtime_checkable`.** `MemorySystemShape` is already `@runtime_checkable`; don't remove that decorator or the adapter loses its friendly-error path.
+- **FullContextAdapter's `load_state` only handles the format `save_state` writes.** External state files must include `memory_system_id` / `memory_version` / `sessions` keys with the documented session shape, or `KeyError` will surface — that's intentional (fail-loud on schema drift).
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main          # once PR-5 is merged
+git checkout -b feat/longmemeval
+# Start PR-6: LongMemEval loader + judge prompts + prompt-fingerprint lock.
+```
+
+---
+
 ## Session: 2026-04-20 — PR-4 cache layer
 
 ### What Was Done
