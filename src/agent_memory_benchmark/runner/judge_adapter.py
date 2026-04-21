@@ -6,11 +6,17 @@ gets back a list of :class:`~.manifest.JudgeRun` verdicts plus the
 template fingerprint flows into the judge cache key so re-baselining a
 template automatically invalidates its cached verdicts.
 
-Why a Protocol here instead of inline branching in the orchestrator: the
-LOCOMO and BEAM judges land in later PRs and will need their own
-template-selection + output-parsing logic (JSON majority vote for LOCOMO,
-ability-specific prompts for BEAM). Isolating that behind this interface
-keeps the orchestrator benchmark-agnostic.
+Why a Protocol here instead of inline branching in the orchestrator: each
+benchmark has its own template-selection + output-parsing logic
+(LongMemEval routes five templates by task + abstention, LOCOMO runs one
+template N times for majority vote, BEAM in PR-11 will specialize per
+ability). Isolating that behind this interface keeps the orchestrator
+benchmark-agnostic.
+
+The :meth:`BenchmarkJudge.prompt_fingerprint` method lets the orchestrator
+look up cached verdicts without knowing what template the judge will use
+— it just asks the judge what fingerprint would be written for this
+``(qa, generated)`` pair and keys the cache off that.
 """
 
 from __future__ import annotations
@@ -19,6 +25,12 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..judge.locomo import (
+    LOCOMO_PROMPT_FINGERPRINTS,
+    locomo_judge_prompt,
+    majority_vote,
+    parse_locomo_correct,
+)
 from ..judge.longmemeval import (
     _GENERAL_TASKS,
     LME_PROMPT_FINGERPRINTS,
@@ -47,6 +59,14 @@ class BenchmarkJudge(Protocol):
     @property
     def bundle_fingerprint(self) -> str:
         """Fingerprint of all templates (for the run manifest)."""
+
+    def prompt_fingerprint(self, qa: QAItem) -> str:
+        """Return the template fingerprint that :meth:`judge` would use.
+
+        The orchestrator calls this before :meth:`judge` to compute the
+        judge cache key and look up any cached verdict; the lookup must
+        agree with the value that would be stored after a real judge run.
+        """
 
     async def judge(self, qa: QAItem, generated: str) -> JudgeOutcome:
         """Run one judge pass over ``(qa, generated)``."""
@@ -83,6 +103,11 @@ class LongMemEvalJudge:
     def bundle_fingerprint(self) -> str:
         return self._bundle_fingerprint
 
+    def prompt_fingerprint(self, qa: QAItem) -> str:
+        abstention = is_abstention_question(qa.question_id)
+        template_key = _template_key_for(qa.question_type, abstention=abstention)
+        return LME_PROMPT_FINGERPRINTS[template_key]
+
     async def judge(self, qa: QAItem, generated: str) -> JudgeOutcome:
         abstention = is_abstention_question(qa.question_id)
         template_key = _template_key_for(qa.question_type, abstention=abstention)
@@ -105,6 +130,69 @@ class LongMemEvalJudge:
         )
 
 
+class LocomoJudge:
+    """Judge wrapper for LOCOMO's ``runs``-way majority-vote protocol.
+
+    LOCOMO's canonical evaluator runs the same CORRECT/WRONG prompt ``N``
+    times (default 10) at low temperature and takes the majority. The
+    concurrent fanout is handled by
+    :meth:`JudgeClient.complete_runs`; parsing folds JSON-label +
+    CORRECT/WRONG substring fallbacks (see
+    :func:`~..judge.locomo.parse_locomo_correct`). ``majority_vote`` picks
+    the overall verdict and is stored as the first element of
+    ``verdicts`` — the per-run entries below it retain their individual
+    CORRECT/WRONG labels so the scorecard can compute ``judge_std``.
+
+    The single template means ``prompt_fingerprint(qa)`` is constant
+    across questions; we still expose the method so the orchestrator's
+    cache-key path stays benchmark-agnostic.
+    """
+
+    benchmark_name = "locomo"
+
+    def __init__(
+        self,
+        client: JudgeClient,
+        *,
+        runs: int = 10,
+        temperature: float = 0.0,
+        bundle_fingerprint: str,
+    ) -> None:
+        if runs < 1:
+            raise ValueError(f"LocomoJudge requires runs >= 1; got {runs}.")
+        self._client = client
+        self._runs = runs
+        self._temperature = temperature
+        self._bundle_fingerprint = bundle_fingerprint
+        self._template_fingerprint = LOCOMO_PROMPT_FINGERPRINTS["locomo"]
+
+    @property
+    def bundle_fingerprint(self) -> str:
+        return self._bundle_fingerprint
+
+    def prompt_fingerprint(self, qa: QAItem) -> str:
+        return self._template_fingerprint
+
+    async def judge(self, qa: QAItem, generated: str) -> JudgeOutcome:
+        prompt = locomo_judge_prompt(qa.question, qa.gold, generated)
+        t0 = time.perf_counter()
+        raws = await self._client.complete_runs(
+            prompt,
+            runs=self._runs,
+            temperature=self._temperature,
+            json_mode=True,
+        )
+        judge_ms = (time.perf_counter() - t0) * 1000.0
+        verdicts: list[dict[str, str | bool]] = [
+            {"correct": parse_locomo_correct(raw), "raw": raw} for raw in raws
+        ]
+        return JudgeOutcome(
+            verdicts=verdicts,
+            prompt_fingerprint=self._template_fingerprint,
+            judge_time_ms=judge_ms,
+        )
+
+
 def _template_key_for(task: str, *, abstention: bool) -> str:
     if abstention:
         return "abstention"
@@ -115,8 +203,16 @@ def _template_key_for(task: str, *, abstention: bool) -> str:
     raise ValueError(f"Unsupported LongMemEval question_type: {task!r}")
 
 
+def locomo_majority_correct(verdicts: list[dict[str, str | bool]]) -> bool:
+    """Convenience: apply :func:`majority_vote` to a verdicts list."""
+
+    return majority_vote([bool(v.get("correct", False)) for v in verdicts])
+
+
 __all__ = [
     "BenchmarkJudge",
     "JudgeOutcome",
+    "LocomoJudge",
     "LongMemEvalJudge",
+    "locomo_majority_correct",
 ]

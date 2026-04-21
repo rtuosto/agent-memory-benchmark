@@ -127,7 +127,14 @@ class TestRejudgeHelpers:
     def test_build_benchmark_judge_rejects_unsupported(self) -> None:
         client = JudgeClient(_FakeProvider())
         with pytest.raises(NotImplementedError):
-            _build_benchmark_judge("locomo", client=client, runs=1, temperature=0.0)
+            _build_benchmark_judge("beam", client=client, runs=1, temperature=0.0)
+
+    def test_build_benchmark_judge_routes_locomo(self) -> None:
+        client = JudgeClient(_FakeProvider())
+        judge = _build_benchmark_judge("locomo", client=client, runs=10, temperature=0.0)
+        from agent_memory_benchmark.runner.judge_adapter import LocomoJudge
+
+        assert isinstance(judge, LocomoJudge)
 
 
 class TestRejudgeCommand:
@@ -306,4 +313,3 @@ class TestRejudgeSubparser:
         assert args.judge_temperature == 0.3
         assert args.judge_runs == 5
         assert args.no_cache is True
-

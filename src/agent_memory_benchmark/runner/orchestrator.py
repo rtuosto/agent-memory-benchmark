@@ -349,26 +349,20 @@ class BenchmarkRunner:
     def _load_cached_judge(self, qa: QAItem, generated: str) -> dict[str, object] | None:
         """Look up a judge verdict by its byte-stable key.
 
-        The lookup mirrors the write path: we compute the same key from
-        the (qa, generated) triple + template fingerprint the judge
-        adapter would use, then try to read ``judge/<key>.json``. Cache
-        miss returns ``None`` — caller does the real judge call.
+        The lookup mirrors the write path: we ask the judge for the
+        template fingerprint it would use for ``qa``, compose the judge
+        cache key, then try to read ``judge/<key>.json``. Cache miss
+        returns ``None`` — caller does the real judge call.
+
+        Benchmark-agnostic: delegates template selection to
+        :meth:`BenchmarkJudge.prompt_fingerprint`, so new benchmarks
+        (LOCOMO, BEAM) slot in by implementing the protocol.
         """
 
         try:
-            from ..judge.longmemeval import (
-                LME_PROMPT_FINGERPRINTS,
-                is_abstention_question,
-            )
-            from .judge_adapter import _template_key_for
-        except ImportError:  # pragma: no cover
+            fp = self._judge.prompt_fingerprint(qa)
+        except Exception:  # noqa: BLE001 — cache is best-effort
             return None
-
-        if self._benchmark_name != "longmemeval":
-            return None
-        abstention = is_abstention_question(qa.question_id)
-        template_key = _template_key_for(qa.question_type, abstention=abstention)
-        fp = LME_PROMPT_FINGERPRINTS[template_key]
         jk = judge_key(
             self._benchmark_name,
             self._judge_model_spec,

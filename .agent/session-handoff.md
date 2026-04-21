@@ -5,6 +5,78 @@
 
 ---
 
+## Session: 2026-04-20 — PR-9 LOCOMO loader + judge (10-run majority)
+
+### What Was Done
+
+**PR-9 (on `feat/locomo`, branched from `main` after PR-8 merged):** LOCOMO loader + judge prompts + `LocomoJudge` adapter + CLI wiring. Orchestrator's judge cache lookup hoisted onto the `BenchmarkJudge` protocol so it's benchmark-agnostic.
+
+- `datasets/locomo.py` — `LocomoDataset` + `load_locomo(path, limit=...)`. Parses `locomo10.json` (local only; LOCOMO isn't HF-redistributed). Each conversation → one `BenchmarkCase`; `dia_id` is used directly as `Turn.turn_id` (already unique per conversation). Category 5 QAs are filtered at load time. `QAItem.question_type = f"cat_{N}"` and `QAItem.category = N` so the scorecard's per-category bucket works. `descriptor_hash = sha256(name, file_sha256, limit_sig)` — any byte change to `locomo10.json` invalidates the cache.
+- `judge/locomo.py` — `LOCOMO_JUDGE_USER_TEMPLATE` byte-exact port of the predecessor/Mem0 template (sha256 `73ad9d3dc9b755b310cbc77b573afd0086dab47ecc3775f2fb5f72fcc05a5280`; combined bundle fp `dff1155ec8266d13105fe91348cfdba55fe40c6f0c94600a29532f49ccbb645a`). `parse_locomo_correct` folds JSON-label path + CORRECT/WRONG substring fallback; both-labels-present or neither → WRONG. `majority_vote` strict majority with tie → False.
+- `runner/judge_adapter.py` — `LocomoJudge` runs N prompts concurrently via `JudgeClient.complete_runs(..., json_mode=True)`, stores every per-run verdict as `{"correct": bool, "raw": str}`. `locomo_majority_correct(verdicts)` helper collapses verdict list. Added `prompt_fingerprint(qa) -> str` to the `BenchmarkJudge` Protocol; both `LongMemEvalJudge` and `LocomoJudge` implement it.
+- `runner/orchestrator.py::_load_cached_judge` — rewritten to use `self._judge.prompt_fingerprint(qa)`. No more LongMemEval-specific branches; the orchestrator stays benchmark-agnostic (addresses PR-7 gotcha).
+- `runner/__init__.py` — new `build_benchmark_judge(dataset_name, ...)` public factory; `run_benchmark` and `amb rejudge` both call it. `_load_dataset` gained a `data_path` kwarg and a `"locomo"` branch that requires `--data`. `_extract_dataset_path` already walks `getattr(dataset, "path", None)` so LOCOMO path surfaces in `meta.json` automatically.
+- `cli/run_cmd.py` — new `--data PATH` flag; threaded into `run_benchmark(data_path=...)`. Pair with `--memory full-context --judge-runs 10` for the LOCOMO smoke path.
+- `cli/rejudge_cmd.py` — swapped its local `_build_benchmark_judge` for the shared factory; `amb rejudge answers.json --judge-model ... --judge-runs 10` now works end-to-end on LOCOMO runs.
+
+**Tests (60 new; 426 passed + 1 skipped):**
+- `test_locomo_loader.py` — conversation→case conversion (turn IDs, session ordering, evidence, gold fallback to adversarial, integer/None answers, blip_caption, category-5 filter), limit truncation, descriptor hash stability + drift across file bytes and limit, end-to-end `load_dataset("locomo", path=...)`.
+- `test_judge_locomo.py` — prompt formatting, JSON-label parser (embedded in prose, lowercase value), substring fallback (both / neither → WRONG), majority vote (majority, tie→False, empty→False).
+- `test_judge_prompts_stable.py` — LOCOMO template + combined bundle fingerprint goldens; three-placeholder check; LOCOMO vs LME bundle fp divergence.
+- `test_runner_judge_adapter.py` — `LocomoJudge` N-fanout, mixed CORRECT/WRONG → majority vote, constant `prompt_fingerprint`, rejects `runs=0`. Also added `test_longmemeval_prompt_fingerprint_matches_judge_write` so the Protocol invariant (pre-computed fp == written fp) is locked.
+- `test_cli_rejudge_cmd.py` — swapped the old "locomo raises NotImplementedError" assertion for `beam`, plus added a `test_build_benchmark_judge_routes_locomo` that asserts `LocomoJudge` is built.
+- `test_longmemeval_loader.py` — replaced `test_load_dataset_locomo_is_reserved_for_pr9` with `test_load_dataset_locomo_requires_path`.
+
+**Invocation (the payoff):**
+
+```bash
+amb run locomo \
+    --memory full-context \
+    --data ./locomo10.json \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --judge-runs 10 --limit 5
+```
+
+### Current State
+
+- Branch: `feat/locomo`. HEAD commit pending (see below — commit after this write).
+- Tests: 426 passed (up from 356), 1 skipped (POSIX-only symlink).
+- Lint: `ruff check src tests` → clean.
+- Types: `mypy src` → clean on 43 source files.
+- Format drift: pre-existing files (`cli/compare_cmd.py`, `test_cli_main_dispatch.py`, `test_cli_summarize_cmd.py`, `test_cli_compare_cmd.py`, `test_llm_ollama.py`) are flagged by `ruff format --check` but were not touched this PR — likely a ruff version drift. Left alone to keep the diff tight. If a later PR bumps ruff, do a one-shot reformat of the whole tree as a `style(*)` commit.
+
+### What's Next
+
+- Merge `feat/locomo` to `main` with `--no-ff` following the established pattern.
+- **PR-10** — HTTP adapter + `openapi.yaml` + `docs/http-api.md`. Third transport.
+- **PR-11** — BEAM loader + ability-specific judge prompts. `build_benchmark_judge` gets a third branch; dataset dispatcher gets a `"beam"` arm with HF revision pin.
+- **PR-12** — noise-aware replicates + `--publishable` gate + `docs/methodology.md`.
+
+### Open Questions
+
+- **Strict majority vs. mean-of-runs as `overall_accuracy`.** The scorecard already averages `judge_runs[*].correct` per question, so LOCOMO's headline accuracy is effectively "fraction of the 10 judges that said CORRECT", not strict majority. `judge_std_by_question` captures the disagreement. The `LocomoJudge`'s `locomo_majority_correct` is exposed for downstream consumers that want the strict-majority view; we did NOT change scorecard behavior for this PR (consistent with predecessor). Revisit if LOCOMO comparability with published numbers starts to matter.
+- **Category 5 filtering at load time vs. scoring time.** Filtered at load (matches predecessor) so `len(dataset.qa) == scorable_qa_count` and the cache key doesn't need a second "scorable only" dimension. If a future analysis wants the cat-5 adversarials, add a `include_category_5=True` loader kwarg rather than a second filter.
+
+### Gotchas
+
+- **LOCOMO `data_path` is mandatory; pass via `--data`, NOT `--m-data`.** `--m-data` is LongMemEval-M specific (multi-GB HF file); LOCOMO uses `--data` (short path flag). The CLI help reflects this, but drivers written against the old signature will miss it.
+- **`--judge-runs 10` is the LOCOMO norm; Ollama must handle the fanout.** `JudgeClient.complete_runs` dispatches via `asyncio.gather`, so 10 prompts hit the judge LLM in parallel. An oversubscribed Ollama instance will queue them (still correct, just slower); for OpenAI judges watch for 429s — retries are already wired.
+- **`prompt_fingerprint(qa)` must equal the fp the judge writes.** If a future benchmark judge computes the template key from more than just `qa`, remember to feed the same inputs into `prompt_fingerprint`. There's a new cross-check test (`test_longmemeval_prompt_fingerprint_matches_judge_write`) — add one per benchmark.
+- **`scorecard._category_key` already handles `category=<int>`.** LOCOMO questions get bucketed as `category_1`, `category_2`, etc. in the scorecard — that's by design (LOCOMO's canonical taxonomy) and overrides `question_type`.
+
+### How to pick up from here
+
+```
+cd ~/code/agent-memory-benchmark
+source .venv/Scripts/activate
+git checkout main
+# Start PR-10: HTTP adapter + openapi.yaml.
+git checkout -b feat/http-adapter
+```
+
+---
+
 ## Session: 2026-04-20 — PR-8 CLI subcommands
 
 ### What Was Done

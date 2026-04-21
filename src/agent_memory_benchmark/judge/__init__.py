@@ -11,6 +11,15 @@ module owns the *text* of the calibration — the thing that must not drift.
 
 from __future__ import annotations
 
+from .locomo import (
+    LOCOMO_JUDGE_FINGERPRINT,
+    LOCOMO_JUDGE_USER_TEMPLATE,
+    LOCOMO_PROMPT_FINGERPRINTS,
+    LOCOMO_PROMPT_TEMPLATES,
+    locomo_judge_prompt,
+    majority_vote,
+    parse_locomo_correct,
+)
 from .longmemeval import (
     LME_ABSTENTION_TEMPLATE,
     LME_GENERAL_TEMPLATE,
@@ -36,10 +45,17 @@ __all__ = [
     "LME_PROMPT_FINGERPRINTS",
     "LME_PROMPT_TEMPLATES",
     "LME_TEMPORAL_TEMPLATE",
+    "LOCOMO_JUDGE_FINGERPRINT",
+    "LOCOMO_JUDGE_USER_TEMPLATE",
+    "LOCOMO_PROMPT_FINGERPRINTS",
+    "LOCOMO_PROMPT_TEMPLATES",
     "LongMemEvalPromptError",
     "combined_fingerprint",
     "fingerprint",
     "is_abstention_question",
+    "locomo_judge_prompt",
     "longmemeval_anscheck_prompt",
+    "majority_vote",
+    "parse_locomo_correct",
     "parse_yes_no",
 ]

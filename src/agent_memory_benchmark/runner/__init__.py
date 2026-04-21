@@ -33,11 +33,12 @@ from typing import Any
 from ..adapters.factory import resolve_adapter
 from ..datasets import load_dataset
 from ..datasets.base import DatasetAdapter
+from ..judge.locomo import LOCOMO_JUDGE_FINGERPRINT
 from ..judge.longmemeval import LME_JUDGE_FINGERPRINT
 from ..llm import build_provider
 from ..llm.judge_client import JudgeClient
 from ..version import __version__
-from .judge_adapter import BenchmarkJudge, LongMemEvalJudge
+from .judge_adapter import BenchmarkJudge, LocomoJudge, LongMemEvalJudge
 from .latest import update_latest_pointer
 from .manifest import (
     QARecord,
@@ -64,6 +65,7 @@ async def run_benchmark(
     judge_runs: int = 1,
     split: str | None = None,
     m_data_path: Path | None = None,
+    data_path: Path | None = None,
     dataset_limit: int | None = None,
     dataset_limit_strategy: str = "stratified",
     memory_config: dict[str, Any] | None = None,
@@ -105,6 +107,7 @@ async def run_benchmark(
         dataset_name,
         split=split,
         m_data_path=m_data_path,
+        data_path=data_path,
         limit=dataset_limit,
         limit_strategy=dataset_limit_strategy,
     )
@@ -269,6 +272,7 @@ def _load_dataset(
     *,
     split: str | None,
     m_data_path: Path | None,
+    data_path: Path | None,
     limit: int | None,
     limit_strategy: str,
 ) -> DatasetAdapter:
@@ -282,6 +286,12 @@ def _load_dataset(
         if limit is not None:
             kwargs["limit"] = limit
         kwargs["limit_strategy"] = limit_strategy
+    elif dataset_name == "locomo":
+        if data_path is None:
+            raise ValueError("--data is required for LOCOMO (path to locomo10.json).")
+        kwargs["path"] = data_path
+        if limit is not None:
+            kwargs["limit"] = limit
     return load_dataset(dataset_name, **kwargs)
 
 
@@ -292,6 +302,22 @@ def _build_benchmark_judge(
     runs: int,
     temperature: float,
 ) -> BenchmarkJudge:
+    return build_benchmark_judge(dataset_name, client=client, runs=runs, temperature=temperature)
+
+
+def build_benchmark_judge(
+    dataset_name: str,
+    *,
+    client: JudgeClient,
+    runs: int,
+    temperature: float,
+) -> BenchmarkJudge:
+    """Factory for the benchmark-specific judge adapter.
+
+    Shared between :func:`run_benchmark` and ``amb rejudge`` so both paths
+    pick the same class and parameter defaults. BEAM lands in PR-11.
+    """
+
     if dataset_name == "longmemeval":
         return LongMemEvalJudge(
             client,
@@ -299,9 +325,14 @@ def _build_benchmark_judge(
             temperature=temperature,
             bundle_fingerprint=LME_JUDGE_FINGERPRINT,
         )
-    raise NotImplementedError(
-        f"{dataset_name!r} judge is not wired yet — LOCOMO lands in PR-9, BEAM in PR-11."
-    )
+    if dataset_name == "locomo":
+        return LocomoJudge(
+            client,
+            runs=runs,
+            temperature=temperature,
+            bundle_fingerprint=LOCOMO_JUDGE_FINGERPRINT,
+        )
+    raise NotImplementedError(f"{dataset_name!r} judge is not wired yet — BEAM lands in PR-11.")
 
 
 def _adapter_kind(spec: str) -> str:
@@ -325,7 +356,7 @@ def _extract_dataset_path(
 ) -> str | None:
     if m_data_path is not None:
         return str(m_data_path.resolve())
-    # LOCOMO/BEAM loaders (later PRs) will carry their own path attributes.
+    # LOCOMO (and, in PR-11, BEAM) carry their source path on the adapter.
     path = getattr(dataset, "path", None)
     return str(path) if path else None
 
