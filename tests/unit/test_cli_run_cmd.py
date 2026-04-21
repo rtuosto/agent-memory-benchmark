@@ -136,3 +136,43 @@ def test_add_run_subparser_exposes_dataset_choices() -> None:
                 "y",
             ]
         )
+
+
+def test_parser_captures_session_and_result_mapper_flags() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "python:pkg.mod:Cls",
+            "--answer-model",
+            "ollama:x",
+            "--judge-model",
+            "ollama:y",
+            "--session-mapper",
+            "agent_memory_benchmark.compat.engram_shim:_to_engram_session",
+            "--result-mapper",
+            "agent_memory_benchmark.compat.engram_shim:_from_engram_answer",
+        ]
+    )
+    assert args.session_mapper == "agent_memory_benchmark.compat.engram_shim:_to_engram_session"
+    assert args.result_mapper == "agent_memory_benchmark.compat.engram_shim:_from_engram_answer"
+
+
+def test_parser_mapper_flags_default_to_none() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "longmemeval",
+            "--memory",
+            "full-context",
+            "--answer-model",
+            "ollama:x",
+            "--judge-model",
+            "ollama:y",
+        ]
+    )
+    assert args.session_mapper is None
+    assert args.result_mapper is None

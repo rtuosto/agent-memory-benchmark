@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from .types import AnswerResult, Session
+from ..types import AnswerResult, Session
 
 
 @runtime_checkable

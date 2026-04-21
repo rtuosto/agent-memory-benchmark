@@ -21,7 +21,7 @@ from typing import Any
 from ..llm import LLMProvider
 from .base import MemoryAdapter
 from .full_context import FullContextAdapter
-from .python_adapter import PythonAdapter
+from .python_adapter import PythonAdapter, ResultMapper, SessionMapper
 
 
 class AdapterSpecError(ValueError):
@@ -33,6 +33,8 @@ def resolve_adapter(
     *,
     config: dict[str, Any] | None = None,
     answer_provider: LLMProvider | None = None,
+    session_mapper: SessionMapper | None = None,
+    result_mapper: ResultMapper | None = None,
 ) -> MemoryAdapter:
     """Resolve a ``--memory`` spec string to a concrete :class:`MemoryAdapter`.
 
@@ -40,6 +42,11 @@ def resolve_adapter(
     constructor kwargs; for ``full-context`` it is currently unused.
     ``answer_provider`` is required for the full-context baseline (it
     does its own generation).
+
+    ``session_mapper`` / ``result_mapper`` forward to
+    :class:`PythonAdapter` for boundary type translation; both are
+    no-ops for the other adapter kinds (passing them is an error if
+    ``kind != "python"`` so misconfigurations surface early).
     """
 
     if not isinstance(spec, str) or not spec.strip():
@@ -59,12 +66,22 @@ def resolve_adapter(
             raise AdapterSpecError(
                 "full-context requires an answer_provider (it generates its own answers)."
             )
+        if session_mapper is not None or result_mapper is not None:
+            raise AdapterSpecError(
+                "session_mapper / result_mapper are only valid for python adapters; "
+                "full-context has no target type to translate."
+            )
         return FullContextAdapter(answer_provider)
 
     if kind == "python":
         if not target:
             raise AdapterSpecError("python adapter needs a target: python:pkg.module:ClassName")
-        return PythonAdapter.from_spec(target, config=config)
+        return PythonAdapter.from_spec(
+            target,
+            config=config,
+            session_mapper=session_mapper,
+            result_mapper=result_mapper,
+        )
 
     raise AdapterSpecError(
         f"Unknown adapter kind {kind!r} in spec {spec!r}; supported: 'full-context', 'python:...'."

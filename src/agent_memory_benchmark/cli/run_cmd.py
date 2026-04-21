@@ -78,6 +78,20 @@ def add_run_subparser(
         metavar="KEY=VALUE",
         help="Key=value pairs forwarded to the adapter. Repeat as needed.",
     )
+    parser.add_argument(
+        "--session-mapper",
+        metavar="pkg.module:function",
+        help="Callable that converts benchmark Session objects before ingest. "
+        "Use when the target's class signature already matches MemorySystemShape "
+        "but its ingest_session expects a different Session/Turn type. For "
+        "class-signature divergence, use a wrapper shim under compat/ instead.",
+    )
+    parser.add_argument(
+        "--result-mapper",
+        metavar="pkg.module:function",
+        help="Callable that converts the target's answer return into the "
+        "benchmark's AnswerResult. Pair with --session-mapper when needed.",
+    )
     parser.add_argument("--out", type=Path, default=Path("results"))
     parser.add_argument("--cache-root", type=Path, default=Path("cache"))
     parser.add_argument("--tag", help="Short tag appended to the run directory name.")
@@ -122,6 +136,8 @@ def run_command(args: argparse.Namespace, *, argv: list[str] | None = None) -> i
                 dataset_limit=args.limit,
                 dataset_limit_strategy=args.limit_strategy,
                 memory_config=memory_config or None,
+                session_mapper_spec=args.session_mapper,
+                result_mapper_spec=args.result_mapper,
                 results_base=args.out,
                 cache_root=args.cache_root,
                 tag=args.tag,

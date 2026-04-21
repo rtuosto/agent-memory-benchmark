@@ -113,3 +113,39 @@ def test_full_context_colon_form_also_works() -> None:
 
     adapter = resolve_adapter("full-context:", answer_provider=_FakeProvider())
     assert isinstance(adapter, FullContextAdapter)
+
+
+def test_python_spec_forwards_mappers_to_python_adapter(
+    plantable_module: types.ModuleType,
+) -> None:
+    """`resolve_adapter` must pass `session_mapper` / `result_mapper` through."""
+
+    sessions_seen: list[Session] = []
+
+    def session_mapper(s: Session) -> Session:
+        sessions_seen.append(s)
+        return s
+
+    def result_mapper(raw: object) -> AnswerResult:
+        # Accept anything; the real adapter only calls this on answer_question.
+        return AnswerResult(answer="mapped", retrieval_time_ms=0.0, generation_time_ms=0.0)
+
+    adapter = resolve_adapter(
+        f"python:{_MODULE}:GoodTarget",
+        session_mapper=session_mapper,
+        result_mapper=result_mapper,
+    )
+    assert isinstance(adapter, PythonAdapter)
+    assert adapter._session_mapper is session_mapper  # noqa: SLF001 (intentional)
+    assert adapter._result_mapper is result_mapper  # noqa: SLF001
+
+
+def test_full_context_rejects_mapper_kwargs() -> None:
+    """Mappers only apply to python adapters; passing them elsewhere is a misuse."""
+
+    with pytest.raises(AdapterSpecError, match="only valid for python adapters"):
+        resolve_adapter(
+            "full-context",
+            answer_provider=_FakeProvider(),
+            session_mapper=lambda s: s,
+        )

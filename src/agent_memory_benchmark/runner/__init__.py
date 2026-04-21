@@ -67,6 +67,8 @@ async def run_benchmark(
     dataset_limit: int | None = None,
     dataset_limit_strategy: str = "stratified",
     memory_config: dict[str, Any] | None = None,
+    session_mapper_spec: str | None = None,
+    result_mapper_spec: str | None = None,
     results_base: Path = Path("results"),
     cache_root: Path = Path("cache"),
     tag: str | None = None,
@@ -87,6 +89,14 @@ async def run_benchmark(
     cache reads specifically — useful when the adapter's state shape
     changes between runs and you want to force a re-ingest without
     bumping ``memory_version``.
+
+    ``session_mapper_spec`` / ``result_mapper_spec`` accept
+    ``"pkg.module:function"`` strings that resolve to callables used to
+    translate :class:`Session` / :class:`AnswerResult` at the
+    :class:`PythonAdapter` boundary. For targets whose *class* signature
+    diverges from :class:`MemorySystemShape` (e.g. missing
+    ``memory_system_id``), prefer a wrapper class in
+    ``agent_memory_benchmark.compat.<system>_shim`` instead.
     """
 
     dataset = _load_dataset(
@@ -111,10 +121,15 @@ async def run_benchmark(
         openai_base_url=openai_base_url,
     )
 
+    session_mapper = _resolve_callable(session_mapper_spec, flag="--session-mapper")
+    result_mapper = _resolve_callable(result_mapper_spec, flag="--result-mapper")
+
     adapter = resolve_adapter(
         memory_spec,
         config=memory_config,
         answer_provider=answer_provider,
+        session_mapper=session_mapper,
+        result_mapper=result_mapper,
     )
 
     answer_resolved = await answer_provider.resolve_spec()
@@ -207,6 +222,42 @@ async def run_benchmark(
 
     _finalize_artifacts(run_dir, manifest=manifest, records=records, results_base=results_base)
     return run_dir
+
+
+def _resolve_callable(spec: str | None, *, flag: str) -> Any:
+    """Resolve ``"pkg.module:function"`` to a callable.
+
+    Used by the CLI's ``--session-mapper`` / ``--result-mapper`` flags. Same
+    grammar as ``--memory python:pkg.module:ClassName`` so users only learn
+    one spec shape. Returns ``None`` when ``spec`` is ``None``.
+    """
+
+    if spec is None:
+        return None
+    spec = spec.strip()
+    if ":" not in spec:
+        raise ValueError(
+            f"{flag} must be 'pkg.module:function' (got {spec!r}); "
+            "the colon separates module path from callable name."
+        )
+    import importlib
+
+    module_path, _, name = spec.partition(":")
+    if not module_path or not name:
+        raise ValueError(f"{flag} needs both module path and callable name (got {spec!r}).")
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as exc:
+        raise ValueError(f"{flag} could not import {module_path!r}: {exc}") from exc
+    try:
+        attr = getattr(module, name)
+    except AttributeError as exc:
+        raise ValueError(f"{flag} module {module_path!r} has no attribute {name!r}.") from exc
+    if not callable(attr):
+        raise ValueError(
+            f"{flag} target {spec!r} is not callable (resolved to {type(attr).__name__})."
+        )
+    return attr
 
 
 def _load_dataset(
