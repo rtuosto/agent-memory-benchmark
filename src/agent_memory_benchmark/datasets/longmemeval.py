@@ -268,27 +268,38 @@ def _stratified_indices(rows: Sequence[dict[str, Any]], limit: int) -> list[int]
         return []
     take = min(limit, total)
     num_types = len(by_type)
+    types_by_size = sorted(by_type, key=lambda t: (-len(by_type[t]), t))
 
-    alloc: dict[str, int] = {
-        qt: max(1, round(take * len(idxs) / total)) for qt, idxs in by_type.items()
+    if take < num_types:
+        # Fewer slots than question types — the min-1-per-type floor is
+        # impossible to satisfy for every type. Pick the ``take`` largest
+        # types (tie-broken alphabetically) and give them one slot each.
+        keepers = set(types_by_size[:take])
+        alloc: dict[str, int] = {qt: (1 if qt in keepers else 0) for qt in by_type}
+    else:
+        alloc = {qt: max(1, round(take * len(idxs) / total)) for qt, idxs in by_type.items()}
+        diff = sum(alloc.values()) - take
+        cursor = 0
+        # Shave from the largest types first when we've over-allocated;
+        # the ``alloc[qt] > 1`` guard keeps the floor intact. Safe because
+        # the ``take < num_types`` branch above handles the "all at floor"
+        # case that would otherwise starve this loop.
+        while diff > 0:
+            qt = types_by_size[cursor % num_types]
+            if alloc[qt] > 1:
+                alloc[qt] -= 1
+                diff -= 1
+            cursor += 1
+        while diff < 0:
+            qt = types_by_size[cursor % num_types]
+            if alloc[qt] < len(by_type[qt]):
+                alloc[qt] += 1
+                diff += 1
+            cursor += 1
+
+    per_type_slice: dict[str, list[int]] = {
+        qt: idxs[: alloc[qt]] for qt, idxs in by_type.items() if alloc[qt] > 0
     }
-    diff = sum(alloc.values()) - take
-    types_by_size = sorted(by_type, key=lambda t: len(by_type[t]), reverse=True)
-    cursor = 0
-    while diff > 0:
-        qt = types_by_size[cursor % num_types]
-        if alloc[qt] > 1:
-            alloc[qt] -= 1
-            diff -= 1
-        cursor += 1
-    while diff < 0:
-        qt = types_by_size[cursor % num_types]
-        if alloc[qt] < len(by_type[qt]):
-            alloc[qt] += 1
-            diff += 1
-        cursor += 1
-
-    per_type_slice: dict[str, list[int]] = {qt: idxs[: alloc[qt]] for qt, idxs in by_type.items()}
     type_order = sorted(per_type_slice)
     positions: dict[str, int] = dict.fromkeys(type_order, 0)
     result: list[int] = []
