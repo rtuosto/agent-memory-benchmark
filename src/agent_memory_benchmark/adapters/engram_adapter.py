@@ -19,6 +19,7 @@ in the exception message.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -127,6 +128,23 @@ class EngramAdapter(MemoryAdapter):
     async def save_state(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
         await self._target.save_state(path)
+        # The runner's ingestion cache keys on `<dir>/state.json` existing.
+        # Engram's native layout writes manifest.json + primary.msgpack +
+        # embeddings.npy + node_ids.json — no state.json — so without a
+        # sentinel the runner can't detect a warm cache and always re-ingests.
+        # Write a minimal pointer so cache hits fire; load_state still
+        # delegates to engram.load_state on the directory.
+        sentinel = path / "state.json"
+        sentinel.write_text(
+            json.dumps(
+                {
+                    "memory_system_id": self.memory_system_id,
+                    "memory_version": self.memory_version,
+                    "engram_manifest": "manifest.json",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     async def load_state(self, path: Path) -> None:
         await self._target.load_state(path)

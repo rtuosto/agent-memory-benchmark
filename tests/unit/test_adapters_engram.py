@@ -337,6 +337,23 @@ def test_save_and_load_state_delegate(tmp_path: Path) -> None:
     assert engram.load_calls == [tmp_path / "state"]
 
 
+def test_save_state_writes_state_json_sentinel(tmp_path: Path) -> None:
+    """Runner's ingestion cache keys on ``<dir>/state.json``. Without
+    this sentinel every repeat run re-ingests even though engram's
+    primary/embeddings/manifest files are on disk."""
+
+    import json as _json
+
+    engram = _FakeEngram()
+    adapter = EngramAdapter(_FakeProvider(), target=engram)
+    asyncio.run(adapter.save_state(tmp_path / "state"))
+    sentinel = tmp_path / "state" / "state.json"
+    assert sentinel.is_file()
+    payload = _json.loads(sentinel.read_text(encoding="utf-8"))
+    assert payload["memory_system_id"] == "engram_graph"
+    assert payload["engram_manifest"] == "manifest.json"
+
+
 def test_supports_persistence_is_true() -> None:
     adapter = EngramAdapter(_FakeProvider(), target=_FakeEngram())
     assert adapter.supports_persistence is True
