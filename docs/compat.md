@@ -72,9 +72,62 @@ Optional — implementing these enables the ingestion cache:
 ## Types the adapter expects back
 
 `AnswerResult` expects the attributes listed above. If your system uses its
-own classes with different names, supply a `--memory-config mapper=pkg.mod:fn`
-that converts your result to the benchmark's shape. Your own `ingest_session`
-input type is also adaptable the same way.
+own classes with different names, supply mapper callables (see next section)
+that translate at the adapter boundary.
+
+## Mapper functions (for divergent type shapes)
+
+`PythonAdapter` accepts two optional callables:
+
+- `session_mapper: Callable[[Session], Any]` — converts the benchmark's
+  `Session` into whatever type your `ingest_session` expects.
+- `result_mapper: Callable[[Any], AnswerResult]` — converts whatever your
+  `answer_question` returns into the benchmark's `AnswerResult`.
+
+These are resolved from the CLI as module-qualified function names using the
+same grammar as `--memory python:pkg.mod:Class`:
+
+```bash
+amb run longmemeval \
+    --memory python:yourpackage.mymem:MyMemory \
+    --session-mapper yourpackage.shim:to_your_session \
+    --result-mapper yourpackage.shim:from_your_result \
+    --memory-config embedding_model=... \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b
+```
+
+Both flags default to identity (pass-through). If your types already match
+the benchmark's shape field-for-field, you don't need either.
+
+## Reference: the engram shim
+
+Engram ships a multi-layer memory system at `memory.system.MultiLayerMemory`
+whose `Session` / `Turn` / `AnswerResult` field names diverge from the
+benchmark's (`DialogueTurn.dia_id` vs. `Turn.turn_id`,
+`Session.date_time` vs. `Session.session_time`, etc.). The shim at
+`agent_memory_benchmark.compat.engram_shim` provides matched mappers:
+
+```bash
+amb run longmemeval \
+    --memory python:memory.system:MultiLayerMemory \
+    --memory-config embedding_model=sentence-transformers/all-MiniLM-L6-v2 \
+    --session-mapper agent_memory_benchmark.compat.engram_shim:to_engram_session \
+    --result-mapper agent_memory_benchmark.compat.engram_shim:from_engram_answer \
+    --answer-model ollama:llama3.1:8b \
+    --judge-model ollama:llama3.1:70b \
+    --split s --limit 5
+```
+
+A paired engram-side patch adds `memory_system_id` and `memory_version` as
+`ClassVar[str]` on `MultiLayerMemory` (a module-level constant does not
+satisfy the `isinstance(..., MemorySystemShape)` check). Without that patch
+the adapter raises `PythonAdapterError` at construction time with the
+specific missing attributes listed.
+
+Evidence-keyed KPIs will report `null` until engram populates
+`RetrievedUnit.source_turn_ids` on returned units. Quality, latency,
+footprint, and throughput KPIs all work in the meantime.
 
 ## Evidence-keyed retrieval KPIs
 
@@ -96,7 +149,10 @@ amb run longmemeval \
 ```
 
 `--memory-config key=value` entries are passed as keyword arguments to your
-class's `__init__`. Use `--memory-config @path/to.json` to load from a file.
+class's `__init__`. Values are parsed as JSON when the string is valid JSON,
+otherwise kept as strings (so `timeout=30` is an int, `model=llama3` stays a
+string). Use `--session-mapper` / `--result-mapper` for type translation at
+the adapter boundary; see the section above.
 
 ## What "structural typing" buys you
 
