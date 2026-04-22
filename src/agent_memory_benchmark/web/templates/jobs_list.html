@@ -9,17 +9,17 @@
 {% if not jobs %}
 <p class="empty">No jobs yet. <a href="/jobs/new">Launch one.</a></p>
 {% else %}
-<table class="runs">
+<table class="runs sortable">
     <thead>
         <tr>
-            <th>Created</th>
-            <th>State</th>
-            <th>Dataset</th>
-            <th>Memory</th>
-            <th>Answer</th>
-            <th>Judge</th>
-            <th>Tag</th>
-            <th class="num">Exit</th>
+            <th data-sort="time">Created</th>
+            <th data-sort="text">State</th>
+            <th data-sort="text">Dataset</th>
+            <th data-sort="text">Memory</th>
+            <th data-sort="text">Answer</th>
+            <th data-sort="text">Judge</th>
+            <th data-sort="text">Tag</th>
+            <th class="num" data-sort="num">Exit</th>
         </tr>
     </thead>
     <tbody>

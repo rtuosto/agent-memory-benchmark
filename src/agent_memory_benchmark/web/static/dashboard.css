@@ -99,6 +99,13 @@ table th {
 table tbody tr:hover { background: var(--hover); }
 table tbody tr:last-child td { border-bottom: none; }
 
+table.sortable thead th[data-sort]:hover {
+    color: var(--fg);
+    background: var(--hover);
+}
+
+table.sortable thead th[aria-sort] { color: var(--accent); }
+
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .runs a { color: var(--accent); text-decoration: none; font-weight: 500; }
