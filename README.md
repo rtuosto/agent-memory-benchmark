@@ -73,11 +73,11 @@ amb serve --tailscale
 
 What the dashboard does:
 
-- **Runs list** at `/runs` — sortable table of every run under `results/`, one row per `<timestamp>_<benchmark>_<memory>_<model>_<tag>/` directory.
+- **Runs list** at `/runs` — every run under `results/` plus nested runs one level deep (e.g. `results/<container>/<timestamp>_.../`). Click any column header to sort; missing values always trail. Timestamps render in the viewer's local timezone.
 - **Run detail** at `/runs/{id}` — KPI cards (overall / macro accuracy, throughput), a dedicated Ingestion section (total time + per-case mean/p95 + sessions/sec), and four Chart.js visualizations (per-category accuracy, per-query latency log scale, retrieval footprint log scale, evidence KPIs).
 - **Inline baseline comparison** — every run detail auto-picks the highest-accuracy run for the same benchmark as a baseline and renders deltas on every KPI card + overlays the baseline on every chart (warm palette = this run, cool palette = baseline). Dropdown at the top lets you pick a different baseline or disable comparison (`?baseline=none`).
 - **Compare table at the bottom** — the same diff `amb compare` prints on the CLI, rendered as HTML so it's readable in the browser.
-- **Jobs** at `/jobs` — launch new benchmark runs from a form and watch them progress. Local (Ollama) jobs submit immediately; any job with an `openai:<model>` answer or judge spec redirects to a cost-estimate confirm page first (pricing snapshot in `web/cost.py`). Job state (`queued`/`running`/`succeeded`/`failed`) is persisted under `jobs/<id>/` as `job.json` + `stdout.log` + `stderr.log`, so history survives server restarts. Concurrency cap defaults to 1 (`--max-concurrent`); extra submissions queue and promote FIFO as slots free up.
+- **Jobs** at `/jobs` — launch new benchmark runs from a form and watch them progress. Memory adapter + model fields are dropdowns: models come from `ollama list` (cached 60s) plus a short OpenAI benchmark whitelist, and custom user entries round-trip through re-renders. Any `openai:<model>` triggers a cost-estimate confirm page (±30% band, per-role breakdown) before the job launches. State is persisted under `jobs/<id>/` (`job.json` + `stdout.log` + `stderr.log`), so history survives server restarts. Concurrency cap defaults to 1 (`--max-concurrent`); extra submissions queue and promote FIFO.
 
 No DB — the filesystem under `results/` is the source of truth. Reloads are cheap thanks to an mtime-keyed cache.
 
