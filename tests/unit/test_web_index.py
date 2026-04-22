@@ -155,6 +155,27 @@ def test_list_empty_when_results_dir_missing(tmp_path: Path) -> None:
     assert index.list_runs() == []
 
 
+def test_list_runs_hides_organizational_container_dirs(tmp_path: Path) -> None:
+    """Dirs with only nested subdirs (no run artifacts at this level)
+    shouldn't surface as empty rows in the runs list."""
+
+    # A real run.
+    _write_run(
+        tmp_path, "2026-04-21_120000_real", scorecard=_sample_scorecard(), meta=_sample_meta()
+    )
+    # A container dir — has a nested run but no scorecard/meta at its own level.
+    container = tmp_path / "smoke-probe"
+    container.mkdir()
+    _write_run(
+        container,
+        "2026-04-21_130000_nested",
+        scorecard=_sample_scorecard(),
+        meta=_sample_meta(),
+    )
+    runs = ResultIndex(tmp_path).list_runs()
+    assert [r.run_id for r in runs] == ["2026-04-21_120000_real"]
+
+
 def test_timestamp_falls_back_to_mtime_for_unnamed_runs(tmp_path: Path) -> None:
     """Dirs without a ``YYYY-MM-DD_HHMMSS_...`` prefix should still get a
     When value so the UI doesn't show a raw slug in the datetime column."""

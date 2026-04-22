@@ -86,6 +86,11 @@ class ResultIndex:
                 continue
             if child.name in {"latest", "latest.txt"}:
                 continue
+            if not _is_run_dir(child):
+                # Skip organizational/container dirs that have no run
+                # artifacts at this level — they'd otherwise render as
+                # empty rows in the runs list.
+                continue
             entry = self._get_entry(child)
             if entry is None:
                 continue
@@ -218,6 +223,23 @@ def _summarize(path: Path, scorecard: dict[str, Any], meta: dict[str, Any]) -> R
         macro_accuracy=_float_or_none(quality.get("macro_accuracy")),
         throughput_qps=_float_or_none(throughput.get("queries_per_sec")),
         complete=bool(scorecard) and bool(meta),
+    )
+
+
+def _is_run_dir(path: Path) -> bool:
+    """Return True if the dir holds run artifacts, not just nested dirs.
+
+    The runner writes ``scorecard.json``, ``meta.json`` and
+    ``answers.json`` at the top level of every run dir. The presence of
+    any one is enough: an in-progress run may only have
+    ``answers.json`` written so far. Absence of all three means this is
+    a user-curated container (e.g. ``smoke-probe/`` holding a nested
+    dated run inside), which shouldn't surface as its own row.
+    """
+
+    return any(
+        (path / name).is_file()
+        for name in ("scorecard.json", "meta.json", "answers.json")
     )
 
 
