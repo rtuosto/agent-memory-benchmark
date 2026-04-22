@@ -45,7 +45,21 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
             },
         )
 
-    @router.get("/runs/{run_id}")
+    # Register the specific raw-file routes BEFORE the greedy
+    # ``{run_id:path}`` detail route — otherwise ``:path`` swallows
+    # the trailing ``/scorecard.json`` and the JSON endpoints 404.
+
+    @router.get("/runs/{run_id:path}/scorecard.json")
+    def scorecard_json(run_id: str, request: Request) -> FileResponse:
+        path = _safe_file(request.app.state.result_index.results_dir, run_id, "scorecard.json")
+        return FileResponse(path, media_type="application/json")
+
+    @router.get("/runs/{run_id:path}/meta.json")
+    def meta_json(run_id: str, request: Request) -> FileResponse:
+        path = _safe_file(request.app.state.result_index.results_dir, run_id, "meta.json")
+        return FileResponse(path, media_type="application/json")
+
+    @router.get("/runs/{run_id:path}")
     def run_detail(  # type: ignore[no-untyped-def]
         run_id: str,
         request: Request,
@@ -100,16 +114,6 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
             },
         )
 
-    @router.get("/runs/{run_id}/scorecard.json")
-    def scorecard_json(run_id: str, request: Request) -> FileResponse:
-        path = _safe_file(request.app.state.result_index.results_dir, run_id, "scorecard.json")
-        return FileResponse(path, media_type="application/json")
-
-    @router.get("/runs/{run_id}/meta.json")
-    def meta_json(run_id: str, request: Request) -> FileResponse:
-        path = _safe_file(request.app.state.result_index.results_dir, run_id, "meta.json")
-        return FileResponse(path, media_type="application/json")
-
     return router
 
 
@@ -155,9 +159,18 @@ def _resolve_baseline(
 
 
 def _safe_file(results_dir: Path, run_id: str, filename: str) -> Path:
-    """Validate ``results_dir/run_id/filename`` stays inside ``results_dir``."""
+    """Validate ``results_dir/run_id/filename`` stays inside ``results_dir``.
 
-    if "/" in run_id or "\\" in run_id or run_id.startswith(".."):
+    ``run_id`` may contain forward-slashes for nested runs — we accept
+    them but reject any ``..`` segment plus absolute-looking paths.
+    The final ``resolve()`` + ``relative_to`` pairing is the real
+    traversal guard.
+    """
+
+    if not run_id or run_id.startswith(("/", "\\")):
+        raise HTTPException(status_code=400, detail="invalid run id")
+    parts = run_id.replace("\\", "/").split("/")
+    if any(p in ("..", "") for p in parts):
         raise HTTPException(status_code=400, detail="invalid run id")
     candidate = (results_dir / run_id / filename).resolve()
     try:

@@ -50,6 +50,8 @@ ENV/
 /cache/
 /results/
 /data/
+/jobs/
+/logs/
 *.cache
 .ollama_cache/
 

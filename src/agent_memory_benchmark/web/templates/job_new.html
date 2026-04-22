@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}New job — amb dashboard{% endblock %}
+{% block content %}
+<h1>New benchmark run</h1>
+
+{% if errors %}
+<div class="warn">
+    <strong>Fix the following and resubmit:</strong>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if needs_confirm and estimate %}
+<div class="confirm-banner">
+    <h2>⚠ Paid API detected — confirm before running</h2>
+    <p class="muted">
+        This job will call OpenAI. Estimated cost
+        (pricing snapshot {{ price_table_date }}, ±30% band):
+    </p>
+    <div class="cost-summary">
+        {% if estimate.total_low_usd is not none %}
+        <div class="cost-total">
+            <span class="kpi-label">Total estimate</span>
+            <span class="kpi-value">
+                ${{ "%.2f"|format(estimate.total_low_usd) }} – ${{ "%.2f"|format(estimate.total_high_usd) }}
+            </span>
+        </div>
+        {% else %}
+        <div class="cost-total">
+            <span class="kpi-label">Total estimate</span>
+            <span class="kpi-value warn-text">unavailable</span>
+        </div>
+        {% endif %}
+        <table class="cost-breakdown">
+            <thead>
+                <tr>
+                    <th>Role</th>
+                    <th>Model</th>
+                    <th class="num">Calls</th>
+                    <th class="num">Input tok/call</th>
+                    <th class="num">Output tok/call</th>
+                    <th class="num">Low USD</th>
+                    <th class="num">High USD</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for role in [estimate.answer, estimate.judge] %}
+                <tr>
+                    <td>{{ role.role }}</td>
+                    <td><code>{{ role.model_spec }}</code></td>
+                    <td class="num">{{ role.n_calls }}</td>
+                    <td class="num">{{ "{:,}".format(role.input_tokens_per_call) }}</td>
+                    <td class="num">{{ role.output_tokens_per_call }}</td>
+                    <td class="num">
+                        {% if role.low_usd is not none %}${{ "%.2f"|format(role.low_usd) }}{% else %}—{% endif %}
+                    </td>
+                    <td class="num">
+                        {% if role.high_usd is not none %}${{ "%.2f"|format(role.high_usd) }}{% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% if role.note %}
+                <tr class="cost-note">
+                    <td></td>
+                    <td colspan="6" class="muted">{{ role.note }}</td>
+                </tr>
+                {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if estimate.unknown_prices %}
+        <p class="warn">
+            No price entry for: <code>{{ estimate.unknown_prices|join(", ") }}</code>.
+            Total cost cannot be bounded — check OpenAI's pricing page first.
+        </p>
+        {% endif %}
+        <details>
+            <summary>Command that will run</summary>
+            <pre class="raw-md">{{ preview_argv|join(" ") }}</pre>
+        </details>
+    </div>
+</div>
+{% endif %}
+
+<form method="post" action="/jobs" class="job-form">
+    {% if needs_confirm %}<input type="hidden" name="confirmed" value="yes">{% endif %}
+
+    <div class="form-row">
+        <label for="dataset">Dataset</label>
+        <select id="dataset" name="dataset">
+            {% for d in ["longmemeval", "locomo", "beam"] %}
+            <option value="{{ d }}" {% if form.dataset == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="memory">Memory adapter</label>
+        <select id="memory" name="memory">
+            {% for choice in memory_choices %}
+            <option value="{{ choice }}" {% if form.memory == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="answer_model">Answer model</label>
+        <select id="answer_model" name="answer_model">
+            {% for choice in model_choices %}
+            <option value="{{ choice }}" {% if form.answer_model == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="judge_model">Judge model</label>
+        <select id="judge_model" name="judge_model">
+            {% for choice in model_choices %}
+            <option value="{{ choice }}" {% if form.judge_model == choice %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="split">Split (longmemeval)</label>
+        <input id="split" name="split" value="{{ form.split or '' }}" placeholder="s">
+    </div>
+
+    <div class="form-row">
+        <label for="data">Data path (locomo)</label>
+        <input id="data" name="data" value="{{ form.data or '' }}" placeholder="path/to/locomo10.json">
+    </div>
+
+    <div class="form-row">
+        <label for="limit">Limit (N questions)</label>
+        <input id="limit" name="limit" type="number" min="1" value="{{ form.limit or '' }}">
+    </div>
+
+    <div class="form-row">
+        <label for="judge_runs">Judge runs</label>
+        <input id="judge_runs" name="judge_runs" type="number" min="1" value="{{ form.judge_runs or '1' }}">
+    </div>
+
+    <div class="form-row">
+        <label for="variant">BEAM variant</label>
+        <select id="variant" name="variant">
+            <option value="beam" {% if form.variant == "beam" %}selected{% endif %}>beam (128K–1M)</option>
+            <option value="beam-10m" {% if form.variant == "beam-10m" %}selected{% endif %}>beam-10m</option>
+        </select>
+    </div>
+
+    <div class="form-row">
+        <label for="tag">Tag</label>
+        <input id="tag" name="tag" value="{{ form.tag or '' }}" placeholder="short slug">
+    </div>
+
+    <div class="form-actions">
+        {% if needs_confirm %}
+            <button type="submit" class="btn btn-danger">Confirm and run</button>
+            <a href="/jobs/new" class="btn btn-secondary">Cancel</a>
+        {% else %}
+            <button type="submit" class="btn btn-primary">Review</button>
+            <a href="/jobs" class="btn btn-secondary">Back</a>
+        {% endif %}
+    </div>
+</form>
+{% endblock %}

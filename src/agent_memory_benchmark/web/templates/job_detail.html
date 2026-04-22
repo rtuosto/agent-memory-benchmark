@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.job_id }} — amb dashboard{% endblock %}
+{% block head_extra %}
+{% if not is_terminal %}
+<meta http-equiv="refresh" content="5">
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1>Job <code>{{ job.job_id }}</code></h1>
+    <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+</div>
+
+<div class="meta-grid">
+    <div><span class="muted">Dataset:</span> {{ job.dataset }}</div>
+    <div><span class="muted">Memory:</span> <code>{{ job.memory }}</code></div>
+    <div><span class="muted">Answer:</span> <code>{{ job.answer_model }}</code></div>
+    <div><span class="muted">Judge:</span> <code>{{ job.judge_model }}</code></div>
+    <div><span class="muted">Tag:</span> {{ job.tag or "—" }}</div>
+    <div><span class="muted">Created:</span> <time datetime="{{ job.created_at }}">{{ job.created_at }}</time></div>
+    <div><span class="muted">Started:</span> {% if job.started_at %}<time datetime="{{ job.started_at }}">{{ job.started_at }}</time>{% else %}—{% endif %}</div>
+    <div><span class="muted">Finished:</span> {% if job.finished_at %}<time datetime="{{ job.finished_at }}">{{ job.finished_at }}</time>{% else %}—{% endif %}</div>
+    <div><span class="muted">PID:</span> {{ job.pid or "—" }}</div>
+    <div><span class="muted">Exit code:</span> {{ job.exit_code if job.exit_code is not none else "—" }}</div>
+</div>
+
+{% if job.error %}
+<div class="warn"><strong>Error:</strong> {{ job.error }}</div>
+{% endif %}
+
+<h2>Command</h2>
+<pre class="raw-md">{{ job.display_command() }}</pre>
+
+<h2>stdout</h2>
+<pre class="log-box">{{ stdout or "(no output yet)" }}</pre>
+
+<h2>stderr</h2>
+<pre class="log-box">{{ stderr or "(no output yet)" }}</pre>
+
+{% if not is_terminal %}
+<p class="muted">Page auto-refreshes every 5 seconds while the job is running. Live streaming arrives in a later step.</p>
+{% endif %}
+
+<div class="actions">
+    <a href="/jobs">← All jobs</a>
+</div>
+{% endblock %}

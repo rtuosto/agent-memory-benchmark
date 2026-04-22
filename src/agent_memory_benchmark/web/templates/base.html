@@ -5,6 +5,7 @@
     <title>{% block title %}amb dashboard{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/dashboard.css') }}">
     <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+    <script src="{{ url_for('static', path='/sortable.js') }}" defer></script>
     {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -19,5 +20,24 @@
     <main>
         {% block content %}{% endblock %}
     </main>
+    <script>
+        // Rewrite <time datetime="..."> elements to the viewer's local TZ.
+        // Keeps server-side templates timezone-agnostic (UTC ISO on the wire).
+        document.querySelectorAll('time[datetime]').forEach(function (el) {
+            var iso = el.getAttribute('datetime');
+            if (!iso) return;
+            var d = new Date(iso);
+            if (isNaN(d.getTime())) return;
+            var fmt = el.dataset.format || 'datetime';
+            if (fmt === 'date') {
+                el.textContent = d.toLocaleDateString();
+            } else if (fmt === 'time') {
+                el.textContent = d.toLocaleTimeString();
+            } else {
+                el.textContent = d.toLocaleString();
+            }
+            el.title = iso + ' (UTC)';
+        });
+    </script>
 </body>
 </html>

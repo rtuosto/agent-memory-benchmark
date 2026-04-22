@@ -6,24 +6,24 @@
 {% if not runs %}
 <p class="empty">No runs found under <code>{{ results_dir }}</code>.</p>
 {% else %}
-<table class="runs">
+<table class="runs sortable">
     <thead>
         <tr>
-            <th>When</th>
-            <th>Benchmark</th>
-            <th>Memory</th>
-            <th>Answer model</th>
-            <th class="num">N</th>
-            <th class="num">Overall</th>
-            <th class="num">Macro</th>
-            <th class="num">q/s</th>
-            <th>Tag</th>
+            <th data-sort="time">When</th>
+            <th data-sort="text">Benchmark</th>
+            <th data-sort="text">Memory</th>
+            <th data-sort="text">Answer model</th>
+            <th class="num" data-sort="num">N</th>
+            <th class="num" data-sort="num">Overall</th>
+            <th class="num" data-sort="num">Macro</th>
+            <th class="num" data-sort="num">q/s</th>
+            <th data-sort="text">Tag</th>
         </tr>
     </thead>
     <tbody>
     {% for run in runs %}
         <tr>
-            <td><a href="/runs/{{ run.run_id }}">{{ run.timestamp or run.run_id }}</a></td>
+            <td><a href="/runs/{{ run.run_id }}">{% if run.timestamp %}<time datetime="{{ run.timestamp }}">{{ run.timestamp }}</time>{% else %}{{ run.run_id }}{% endif %}</a></td>
             <td>{{ run.benchmark or "—" }}</td>
             <td>
                 {{ run.memory_system_id or "—" }}

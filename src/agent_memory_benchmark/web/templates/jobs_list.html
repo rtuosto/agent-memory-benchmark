@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Jobs — amb dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1>Jobs <span class="muted">({{ jobs|length }})</span></h1>
+    <a class="btn btn-primary" href="/jobs/new">New run</a>
+</div>
+
+{% if not jobs %}
+<p class="empty">No jobs yet. <a href="/jobs/new">Launch one.</a></p>
+{% else %}
+<table class="runs sortable">
+    <thead>
+        <tr>
+            <th data-sort="time">Created</th>
+            <th data-sort="text">State</th>
+            <th data-sort="text">Dataset</th>
+            <th data-sort="text">Memory</th>
+            <th data-sort="text">Answer</th>
+            <th data-sort="text">Judge</th>
+            <th data-sort="text">Tag</th>
+            <th class="num" data-sort="num">Exit</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for job in jobs %}
+        <tr>
+            <td><a href="/jobs/{{ job.job_id }}"><time datetime="{{ job.created_at }}">{{ job.created_at }}</time></a></td>
+            <td><span class="job-state job-state-{{ job.state }}">{{ job.state }}</span></td>
+            <td>{{ job.dataset }}</td>
+            <td><code>{{ job.memory }}</code></td>
+            <td><code>{{ job.answer_model }}</code></td>
+            <td><code>{{ job.judge_model }}</code></td>
+            <td>{{ job.tag or "" }}</td>
+            <td class="num">{{ job.exit_code if job.exit_code is not none else "—" }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

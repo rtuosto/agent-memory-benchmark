@@ -99,6 +99,13 @@ table th {
 table tbody tr:hover { background: var(--hover); }
 table tbody tr:last-child td { border-bottom: none; }
 
+table.sortable thead th[data-sort]:hover {
+    color: var(--fg);
+    background: var(--hover);
+}
+
+table.sortable thead th[aria-sort] { color: var(--accent); }
+
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .runs a { color: var(--accent); text-decoration: none; font-weight: 500; }
@@ -236,3 +243,159 @@ table tbody tr:last-child td { border-bottom: none; }
 }
 
 .actions a:hover { text-decoration: underline; }
+
+.page-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.4rem 0.9rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--fg);
+    text-decoration: none;
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:hover { border-color: var(--accent); }
+
+.btn-primary {
+    background: var(--accent);
+    color: #0f1115;
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+.btn-primary:hover { filter: brightness(1.1); }
+
+.btn-danger {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: #fff;
+    font-weight: 600;
+}
+
+.btn-danger:hover { filter: brightness(1.1); }
+
+.btn-secondary { color: var(--muted); }
+
+.job-state {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 600;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+}
+
+.job-state-queued     { background: rgba(156, 163, 175, 0.2); color: var(--muted); }
+.job-state-running    { background: rgba(96, 165, 250, 0.2);  color: var(--accent); }
+.job-state-succeeded  { background: rgba(52, 211, 153, 0.2);  color: var(--good); }
+.job-state-failed     { background: rgba(248, 113, 113, 0.2); color: var(--bad); }
+.job-state-killed     { background: rgba(248, 113, 113, 0.2); color: var(--bad); }
+.job-state-orphaned   { background: rgba(251, 191, 36, 0.2);  color: #fbbf24; }
+
+.job-form {
+    display: grid;
+    gap: 0.75rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    max-width: 720px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.form-row label {
+    color: var(--muted);
+    font-size: 0.9em;
+}
+
+.form-row input, .form-row select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.4rem 0.5rem;
+    font: inherit;
+}
+
+.form-row input:focus, .form-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.form-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.confirm-banner {
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid #fbbf24;
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.confirm-banner h2 {
+    margin: 0 0 0.5rem 0;
+    color: #fbbf24;
+}
+
+.cost-summary { display: grid; gap: 0.75rem; }
+
+.cost-total {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+}
+
+.cost-total .kpi-value { font-size: 1.5rem; }
+.warn-text { color: #fbbf24; }
+
+.cost-breakdown {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cost-breakdown th, .cost-breakdown td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9em;
+}
+
+.cost-breakdown tr.cost-note td { border-bottom: 1px solid var(--border); }
+
+.log-box {
+    background: #06080b;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.82em;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 24rem;
+    overflow-y: auto;
+}
