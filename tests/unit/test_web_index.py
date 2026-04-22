@@ -155,15 +155,16 @@ def test_list_empty_when_results_dir_missing(tmp_path: Path) -> None:
     assert index.list_runs() == []
 
 
-def test_list_runs_hides_organizational_container_dirs(tmp_path: Path) -> None:
-    """Dirs with only nested subdirs (no run artifacts at this level)
-    shouldn't surface as empty rows in the runs list."""
+def test_list_runs_recurses_into_container_dirs(tmp_path: Path) -> None:
+    """Container dirs (no run artifacts at the top level, but holding
+    a nested run dir) should surface their nested runs — not render
+    as an empty row themselves."""
 
-    # A real run.
+    # A top-level run.
     _write_run(
         tmp_path, "2026-04-21_120000_real", scorecard=_sample_scorecard(), meta=_sample_meta()
     )
-    # A container dir — has a nested run but no scorecard/meta at its own level.
+    # A container with a nested run one level deep.
     container = tmp_path / "smoke-probe"
     container.mkdir()
     _write_run(
@@ -172,8 +173,15 @@ def test_list_runs_hides_organizational_container_dirs(tmp_path: Path) -> None:
         scorecard=_sample_scorecard(),
         meta=_sample_meta(),
     )
+    # An empty container dir — should not appear at all.
+    (tmp_path / "truly-empty").mkdir()
+
     runs = ResultIndex(tmp_path).list_runs()
-    assert [r.run_id for r in runs] == ["2026-04-21_120000_real"]
+    ids = sorted(r.run_id for r in runs)
+    assert ids == [
+        "2026-04-21_120000_real",
+        "smoke-probe/2026-04-21_130000_nested",
+    ]
 
 
 def test_timestamp_falls_back_to_mtime_for_unnamed_runs(tmp_path: Path) -> None:

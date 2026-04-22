@@ -81,22 +81,47 @@ class ResultIndex:
         if not self._results_dir.exists():
             return []
         summaries: list[RunSummary] = []
-        for child in self._results_dir.iterdir():
-            if not child.is_dir():
-                continue
-            if child.name in {"latest", "latest.txt"}:
-                continue
-            if not _is_run_dir(child):
-                # Skip organizational/container dirs that have no run
-                # artifacts at this level — they'd otherwise render as
-                # empty rows in the runs list.
-                continue
-            entry = self._get_entry(child)
+        for run_path in self._discover_run_dirs():
+            entry = self._get_entry(run_path)
             if entry is None:
                 continue
             summaries.append(entry.summary)
         summaries.sort(key=lambda s: s.run_id, reverse=True)
         return summaries
+
+    def _discover_run_dirs(self) -> list[Path]:
+        """Yield every run directory under ``results_dir`` (max depth 2).
+
+        A dir counts as a run dir when it contains ``scorecard.json``,
+        ``meta.json``, or ``answers.json`` at its top level. Container
+        dirs (e.g. ``smoke-probe/`` holding a nested dated run) are
+        skipped themselves but recursed into — one level deep — so the
+        nested run surfaces. Two levels is the depth users actually
+        organize by; deeper nesting isn't an observed pattern and
+        would slow down repos with large ``results/``.
+        """
+
+        discovered: list[Path] = []
+        for child in self._results_dir.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name in {"latest", "latest.txt"}:
+                continue
+            if _is_run_dir(child):
+                discovered.append(child)
+                continue
+            # Container — peek one level deeper for nested runs.
+            try:
+                for grandchild in child.iterdir():
+                    if not grandchild.is_dir():
+                        continue
+                    if grandchild.name in {"latest", "latest.txt"}:
+                        continue
+                    if _is_run_dir(grandchild):
+                        discovered.append(grandchild)
+            except OSError:
+                continue
+        return discovered
 
     def best_baseline(
         self,
@@ -143,14 +168,29 @@ class ResultIndex:
         ]
 
     def get_run(self, run_id: str) -> RunDetail | None:
-        """Return the full detail for ``run_id`` or ``None`` if unknown."""
+        """Return the full detail for ``run_id`` or ``None`` if unknown.
 
-        if "/" in run_id or "\\" in run_id or run_id.startswith(".."):
+        ``run_id`` may contain forward-slashes for nested runs (e.g.
+        ``engram-minilm-batched-100q/2026-04-21_061014_...``). The
+        resolve+relative_to check still pins the target inside
+        ``results_dir`` — traversal attempts (``..`` segments, absolute
+        paths) are rejected.
+        """
+
+        if not run_id or run_id.startswith(("/", "\\")):
+            return None
+        # Reject Windows drive letters and any ``..`` segment.
+        parts = run_id.replace("\\", "/").split("/")
+        if any(p in ("..", "") for p in parts):
             return None
         path = self._results_dir / run_id
-        if not path.is_dir() or not path.resolve().is_relative_to(
-            self._results_dir.resolve()
-        ):
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError):
+            return None
+        if not resolved.is_dir():
+            return None
+        if not resolved.is_relative_to(self._results_dir.resolve()):
             return None
         entry = self._get_entry(path)
         if entry is None:
@@ -167,18 +207,28 @@ class ResultIndex:
             mtime_ns = path.stat().st_mtime_ns
         except OSError:
             return None
-        cached = self._cache.get(path.name)
+        run_id = self._run_id_for(path)
+        cached = self._cache.get(run_id)
         if cached is not None and cached.mtime_ns == mtime_ns:
             return cached
-        entry = self._build_entry(path, mtime_ns)
-        self._cache[path.name] = entry
+        entry = self._build_entry(path, run_id, mtime_ns)
+        self._cache[run_id] = entry
         return entry
 
-    def _build_entry(self, path: Path, mtime_ns: int) -> _CacheEntry:
+    def _run_id_for(self, path: Path) -> str:
+        """Return the run_id used in URLs — the path relative to
+        ``results_dir``, with forward-slash separators so it round-trips
+        cleanly through ``{run_id:path}`` route params.
+        """
+
+        rel = path.relative_to(self._results_dir)
+        return rel.as_posix()
+
+    def _build_entry(self, path: Path, run_id: str, mtime_ns: int) -> _CacheEntry:
         scorecard = _read_json(path / "scorecard.json")
         meta = _read_json(path / "meta.json")
         scorecard_md = _read_text(path / "scorecard.md")
-        summary = _summarize(path, scorecard, meta)
+        summary = _summarize(path, run_id, scorecard, meta)
         return _CacheEntry(
             mtime_ns=mtime_ns,
             summary=summary,
@@ -204,12 +254,14 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _summarize(path: Path, scorecard: dict[str, Any], meta: dict[str, Any]) -> RunSummary:
+def _summarize(
+    path: Path, run_id: str, scorecard: dict[str, Any], meta: dict[str, Any]
+) -> RunSummary:
     quality = scorecard.get("quality", {}) if isinstance(scorecard, dict) else {}
     throughput = scorecard.get("throughput", {}) if isinstance(scorecard, dict) else {}
     timestamp = _extract_timestamp(path.name) or _mtime_iso(path)
     return RunSummary(
-        run_id=path.name,
+        run_id=run_id,
         path=path,
         timestamp=timestamp,
         benchmark=_str_or_none(scorecard.get("benchmark") or meta.get("benchmark")),
